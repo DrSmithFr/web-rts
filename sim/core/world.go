@@ -17,32 +17,43 @@ import (
 	"rts/sim/hash"
 	"rts/sim/proto"
 	"rts/sim/rng"
+	"rts/sim/worldgen"
 )
 
 const (
 	// WorldVersion bumps whenever the hash layout changes.
-	WorldVersion uint64 = 1
+	WorldVersion uint64 = 2
 
 	// HashPeriodTicks is how often peers exchange state hashes on the
 	// wire (and how often replays checkpoint).
 	HashPeriodTicks uint32 = 20
 
-	hashLabel = "rts.world/v1"
+	hashLabel = "rts.world/v2"
 )
 
 // World is the full simulation state.
 type World struct {
 	seed     uint64
+	gameMap  *worldgen.Map
 	tick     uint32
 	streams  rng.Streams
 	applied  uint64
 	rejected uint64
 }
 
-// NewWorld creates the deterministic world for one game seed.
+// NewWorld creates the deterministic world for one game seed, including
+// the shared map. Generation failure is a programming error (it never
+// happens for supported sizes) and panics identically on every peer.
 func NewWorld(seed uint64) *World {
-	return &World{seed: seed, streams: rng.NewStreams(seed)}
+	m, err := worldgen.Generate(seed, worldgen.DefaultSize, worldgen.DefaultPlayers)
+	if err != nil {
+		panic(fmt.Sprintf("core: worldgen: %v", err))
+	}
+	return &World{seed: seed, gameMap: m, streams: rng.NewStreams(seed)}
 }
+
+// Map returns the shared generated map.
+func (w *World) Map() *worldgen.Map { return w.gameMap }
 
 // Tick returns the number of simulation ticks already executed.
 func (w *World) Tick() uint32 { return w.tick }
@@ -78,6 +89,7 @@ func (w *World) Hash() uint64 {
 	h.WriteString(hashLabel)
 	h.WriteU64(WorldVersion)
 	h.WriteU64(w.seed)
+	h.WriteU64(w.gameMap.Hash())
 	h.WriteU32(w.tick)
 	h.WriteU64(w.applied)
 	h.WriteU64(w.rejected)
