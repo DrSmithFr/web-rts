@@ -1,7 +1,18 @@
 GO    ?= go
 SHELL := /usr/bin/env bash
 
-.PHONY: vendor clean
+.PHONY: vendor test test-sim fmt vet clean
+
+test: test-sim
+
+test-sim:
+	$(GO) test ./sim/...
+
+fmt:
+	gofmt -w sim
+
+vet:
+	$(GO) vet ./sim/...
 
 vendor: client/static/wasm_exec.js
 
