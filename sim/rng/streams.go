@@ -13,13 +13,13 @@ const (
 	DomainBot
 	DomainMisc
 
-	domainCount = 4
+	DomainCount = 4
 )
 
 // Streams holds one generator per domain, all derived deterministically
 // from a single world seed.
 type Streams struct {
-	states [domainCount]PCG32
+	states [DomainCount]PCG32
 }
 
 // NewStreams derives every domain stream from the world seed.
@@ -36,7 +36,7 @@ func NewStreams(seed uint64) Streams {
 // invalid domain, which is a programming error and behaves identically on
 // every platform.
 func (s *Streams) Next(d Domain) uint32 {
-	if d >= domainCount {
+	if d >= DomainCount {
 		panic("rng: invalid domain")
 	}
 	return s.states[d].Next()
