@@ -1,0 +1,15 @@
+# Go
+bin/
+build/
+
+# Generated WebAssembly and vendored bridge
+client/static/sim.wasm
+client/static/wasm_exec.js
+
+# Node
+node_modules/
+client/dist/
+
+# Editors / OS
+.DS_Store
+*.log
