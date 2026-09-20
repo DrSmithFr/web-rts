@@ -32,6 +32,39 @@ export class SimWorld {
   seed(): number {
     return this.sim.seed(this.id);
   }
+
+  mapSize(): number {
+    return this.sim.mapSize(this.id);
+  }
+
+  mapTiles(): Uint8Array {
+    return this.sim.mapTiles(this.id);
+  }
+
+  // vertexHeights decodes the (size+1)^2 whole-number vertex heights.
+  vertexHeights(): Uint16Array {
+    const raw = this.sim.mapHeights(this.id);
+    const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    const out = new Uint16Array(raw.byteLength / 2);
+    for (let i = 0; i < out.length; i++) {
+      out[i] = view.getUint16(i * 2, true);
+    }
+    return out;
+  }
+
+  mapHashHex(): string {
+    return this.sim.mapHashHex(this.id);
+  }
+
+  spawns(): { x: number; y: number }[] {
+    const n = this.sim.spawnCount(this.id);
+    const out: { x: number; y: number }[] = [];
+    for (let i = 0; i < n; i++) {
+      const packed = this.sim.spawnAt(this.id, i);
+      out.push({ x: Math.floor(packed / 65536), y: packed % 65536 });
+    }
+    return out;
+  }
 }
 
 // Seed comes from the ?seed= query parameter, as a decimal or 0x integer

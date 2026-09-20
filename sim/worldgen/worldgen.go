@@ -195,10 +195,11 @@ type spawnCandidate struct {
 	x, y  int
 }
 
-// placeSpawns picks player starts deterministically: every tile is scored
-// by walkable tiles inside the spawn window; candidates are visited best
-// score first (ties by row-major order) and greedily kept when far enough
-// from already chosen spawns.
+// placeSpawns picks player starts deterministically: candidates are scored
+// by walkable tiles inside the spawn window and sorted best first (ties by
+// row-major order). The first start is the best candidate; each following
+// start is the candidate maximizing the distance to the already chosen
+// ones (ties by sort order), so starts spread out over equal-quality land.
 func placeSpawns(g *terrain.Grid, players int) ([][2]int, error) {
 	size := g.Size()
 	var candidates []spawnCandidate
@@ -219,23 +220,40 @@ func placeSpawns(g *terrain.Grid, players int) ([][2]int, error) {
 
 	minDist2 := spawnMinDist * spawnMinDist
 	var chosen [][2]int
-	for _, c := range candidates {
-		ok := true
-		for _, s := range chosen {
-			dx, dy := c.x-s[0], c.y-s[1]
-			if dx*dx+dy*dy < minDist2 {
-				ok = false
-				break
+	for len(chosen) < players {
+		bestIdx, bestDist := -1, -1
+		for i, c := range candidates {
+			dupe := false
+			for _, s := range chosen {
+				if s[0] == c.x && s[1] == c.y {
+					dupe = true
+					break
+				}
+			}
+			if dupe {
+				continue
+			}
+			d := -1
+			for _, s := range chosen {
+				dx, dy := c.x-s[0], c.y-s[1]
+				d2 := dx*dx + dy*dy
+				if d == -1 || d2 < d {
+					d = d2
+				}
+			}
+			if d == -1 || d > bestDist {
+				bestIdx, bestDist = i, d
 			}
 		}
-		if ok {
-			chosen = append(chosen, [2]int{c.x, c.y})
-			if len(chosen) == players {
-				return chosen, nil
-			}
+		if bestIdx == -1 || (len(chosen) > 0 && bestDist < minDist2) {
+			break
 		}
+		chosen = append(chosen, [2]int{candidates[bestIdx].x, candidates[bestIdx].y})
 	}
-	return chosen, ErrNoSpawns
+	if len(chosen) < players {
+		return chosen, ErrNoSpawns
+	}
+	return chosen, nil
 }
 
 // landScore counts walkable tiles in the spawnWindow square centered at (x, y).
