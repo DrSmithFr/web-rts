@@ -1,0 +1,9 @@
+{
+  "app.title": "rts",
+  "hud.status.loading": "loading simulation…",
+  "hud.status.ready": "simulation {version} ready — seed {seed}",
+  "hud.status.failed": "simulation failed to start",
+  "hud.tick": "tick",
+  "hud.hash": "hash",
+  "hud.fps": "fps"
+}

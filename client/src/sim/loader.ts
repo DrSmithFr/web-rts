@@ -1,0 +1,44 @@
+// Raw surface registered by the Go WebAssembly module on globalThis.RTSSim.
+export interface RawSim {
+  version(): string;
+  newWorld(seed?: number): number;
+  order(id: number, player: number, kind: number, payload?: Uint8Array): void;
+  step(id: number): void;
+  tick(id: number): number;
+  hashHex(id: number): string;
+  seed(id: number): number;
+}
+
+declare global {
+  interface Window {
+    RTSSim?: RawSim;
+  }
+}
+
+const READY_ATTEMPTS = 200;
+const READY_INTERVAL_MS = 10;
+
+async function waitForSim(): Promise<RawSim> {
+  for (let i = 0; i < READY_ATTEMPTS; i++) {
+    if (window.RTSSim !== undefined) {
+      return window.RTSSim;
+    }
+    await new Promise((resolve) => setTimeout(resolve, READY_INTERVAL_MS));
+  }
+  throw new Error('RTSSim bridge did not register');
+}
+
+// Instantiate sim.wasm through the Go runtime and resolve once the RTSSim
+// globals exist. go.run resolves only when the module exits, which it never
+// does, so its promise is intentionally ignored.
+export async function loadSim(wasmUrl = '/sim.wasm'): Promise<RawSim> {
+  const response = await fetch(wasmUrl);
+  if (!response.ok) {
+    throw new Error(`failed to fetch ${wasmUrl}: ${response.status}`);
+  }
+  const bytes = await response.arrayBuffer();
+  const go = new Go();
+  const { instance } = await WebAssembly.instantiate(bytes, go.importObject);
+  void go.run(instance);
+  return waitForSim();
+}
