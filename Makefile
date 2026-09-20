@@ -1,71 +1,73 @@
+# Portable Makefile: recipes must work under sh (Linux/macOS) and cmd.exe
+# (Windows). Unix-only commands are replaced by the node helpers in tools/.
+
 GO     ?= go
-SHELL  := /usr/bin/env bash
+GOROOT ?= $(shell $(GO) env GOROOT)
 REPLAY := tools/replays/phase1_noop.rts
 
-.PHONY: all vendor wasm test test-sim test-det test-client test-func test-e2e dev fmt vet run-det clean
+ifeq ($(OS),Windows_NT)
+DETCHECK := bin\detcheck.exe
+else
+DETCHECK := ./bin/detcheck
+endif
+
+.PHONY: all vendor wasm test test-sim test-det test-parity test-client test-func test-e2e dev fmt vet run-det clean
 
 all: wasm
 
+vendor: client/static/wasm_exec.js
+
+client/static/wasm_exec.js:
+	node tools/fsutil.mjs copy "$(GOROOT)/lib/wasm/wasm_exec.js" client/static/wasm_exec.js
+
 wasm: client/static/sim.wasm
 
-client/static/sim.wasm: $(wildcard sim/*/*.go) $(wildcard wasm/*.go) | client/static
-	GOOS=js GOARCH=wasm $(GO) build -trimpath -o $@ ./wasm
+client/static/sim.wasm: $(wildcard sim/*/*.go) $(wildcard wasm/*.go)
+	node tools/fsutil.mjs mkdir client/static
+	node tools/crossexec.mjs GOOS=js GOARCH=wasm -- $(GO) build -trimpath -o client/static/sim.wasm ./wasm
 
 test: test-sim test-det test-parity test-client test-func test-e2e
-
-test-parity: wasm bin/detcheck | build
-	./bin/detcheck -replay $(REPLAY) > build/native.txt
-	node tools/parity/run.mjs $(REPLAY) > build/wasm.txt
-	diff -u build/native.txt build/wasm.txt
-	@echo "parity ok: native == wasm over $$(wc -l < build/native.txt) lines"
-
-build:
-	mkdir -p build
 
 test-sim:
 	$(GO) test ./sim/...
 
 test-det: bin/detcheck
-	./bin/detcheck -verify $(REPLAY)
+	$(DETCHECK) -verify $(REPLAY)
+
+test-parity: wasm bin/detcheck
+	node tools/fsutil.mjs mkdir build
+	$(DETCHECK) -replay $(REPLAY) > build/native.txt
+	node tools/parity/run.mjs $(REPLAY) > build/wasm.txt
+	node tools/parity/check.mjs build/native.txt build/wasm.txt
 
 test-client: client/node_modules
-	npm --prefix client test
+	npm --prefix client run test
 
 test-func:
-	@echo "func tests: websocket scenarios land in phase 7, skipped"
+	@echo func tests: websocket scenarios land in phase 7, skipped
 
 test-e2e:
-	@echo "e2e tests: playwright lands in phase 8, skipped"
+	@echo e2e tests: playwright lands in phase 8, skipped
 
 client/node_modules: client/package.json client/package-lock.json
 	npm --prefix client ci
 
+run-det: bin/detcheck
+	$(DETCHECK) -replay $(REPLAY)
+
+bin/detcheck: $(wildcard tools/detcheck/*.go) $(wildcard sim/*/*.go)
+	node tools/fsutil.mjs mkdir bin
+	$(GO) build -trimpath -o bin/detcheck ./tools/detcheck
+
 dev: wasm vendor client/node_modules
 	npm --prefix client run dev
-
-run-det: bin/detcheck
-	./bin/detcheck -replay $(REPLAY)
-
-bin/detcheck: $(wildcard tools/detcheck/*.go) $(wildcard sim/*/*.go) | bin
-	$(GO) build -trimpath -o $@ ./tools/detcheck
-
-bin:
-	mkdir -p bin
 
 fmt:
 	gofmt -w sim tools wasm
 
 vet:
 	$(GO) vet ./sim/... ./tools/...
-	GOOS=js GOARCH=wasm $(GO) vet ./wasm
-
-vendor: client/static/wasm_exec.js
-
-client/static/wasm_exec.js: | client/static
-	cp "$$($(GO) env GOROOT)/lib/wasm/wasm_exec.js" $@
-
-client/static:
-	mkdir -p client/static
+	node tools/crossexec.mjs GOOS=js GOARCH=wasm -- $(GO) vet ./wasm
 
 clean:
-	rm -rf bin build client/node_modules client/dist client/static/sim.wasm client/static/wasm_exec.js
+	node tools/fsutil.mjs rmrf bin build client/node_modules client/dist client/static/sim.wasm client/static/wasm_exec.js
