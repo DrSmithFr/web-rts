@@ -11,7 +11,16 @@ wasm: client/static/sim.wasm
 client/static/sim.wasm: $(wildcard sim/*/*.go) $(wildcard wasm/*.go) | client/static
 	GOOS=js GOARCH=wasm $(GO) build -trimpath -o $@ ./wasm
 
-test: test-sim test-det test-client test-func test-e2e
+test: test-sim test-det test-parity test-client test-func test-e2e
+
+test-parity: wasm bin/detcheck | build
+	./bin/detcheck -replay $(REPLAY) > build/native.txt
+	node tools/parity/run.mjs $(REPLAY) > build/wasm.txt
+	diff -u build/native.txt build/wasm.txt
+	@echo "parity ok: native == wasm over $$(wc -l < build/native.txt) lines"
+
+build:
+	mkdir -p build
 
 test-sim:
 	$(GO) test ./sim/...
