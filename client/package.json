@@ -9,9 +9,13 @@
   },
   "type": "module",
   "devDependencies": {
+    "@types/three": "^0.186.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.1"
   },
-  "private": true
+  "private": true,
+  "dependencies": {
+    "three": "^0.186.0"
+  }
 }
