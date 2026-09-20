@@ -9,7 +9,7 @@ test-sim:
 	$(GO) test ./sim/...
 
 fmt:
-	gofmt -w sim
+	gofmt -w sim tools
 
 vet:
 	$(GO) vet ./sim/...
