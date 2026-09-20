@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>rts</title>
+    <script src="/wasm_exec.js"></script>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+      }
+      body {
+        margin: 0;
+        background: #10131a;
+        color: #d7dce6;
+      }
+      #hud {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        padding: 10px 14px;
+        background: rgba(10, 12, 18, 0.8);
+        border: 1px solid #2c3345;
+        border-radius: 6px;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      #hud .dim {
+        color: #8a93a6;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud">
+      <div id="status" class="dim">initializing</div>
+      <div id="stats" hidden>
+        <div><span class="dim">tick</span> <span id="tick">0</span></div>
+        <div><span class="dim">hash</span> <span id="hash">0000000000000000</span></div>
+        <div><span class="dim">fps</span> <span id="fps">0</span></div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
