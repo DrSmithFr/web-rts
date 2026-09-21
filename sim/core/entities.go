@@ -3,6 +3,7 @@ package core
 import (
 	"rts/sim/entity"
 	"rts/sim/fixed"
+	"rts/sim/fog"
 	"rts/sim/resource"
 )
 
@@ -25,12 +26,16 @@ const (
 	VillagerHP int32 = 40
 	BuildingHP int32 = 200
 
-	// VillagerSpeed is ~1 tile/s at 20 Hz. Movement is a straight line;
-	// terrain-aware pathfinding arrives with phase 4.
+	// VillagerSpeed is ~1 tile/s at 20 Hz.
 	VillagerSpeed fixed.F16 = 3277
 
 	// WorkRange is how close a worker must stand to a node or site.
 	WorkRange fixed.F16 = 1<<16 + 1<<15 // 1.5 tiles
+
+	// Vision radii in tiles (fog of war).
+	VillagerVision = 6
+	BuildingVision = 8
+	SiteVision     = 4
 
 	startWood  int32 = 100
 	startStone int32 = 50
@@ -42,6 +47,15 @@ const (
 
 	// MaxTrainQueue bounds queued villagers per building.
 	MaxTrainQueue int32 = 5
+
+	// MaxFields caps concurrent flow fields; the oldest is evicted.
+	MaxFields = 64
+
+	// FieldMargin pads a flow-field window around its route bounds.
+	FieldMargin int32 = 16
+
+	// MaxFieldSpan caps one window axis.
+	MaxFieldSpan int32 = 192
 )
 
 // Unit is a worker (villager) entity payload.
@@ -52,6 +66,7 @@ type Unit struct {
 	X, Y     fixed.F16
 	TX, TY   fixed.F16
 	Target   entity.ID
+	Field    entity.ID
 	CarriedK resource.Kind
 	Carried  int32
 	HP       int32
@@ -85,4 +100,13 @@ type Player struct {
 	Active bool
 	Res    [resource.Count]int32
 	Pop    int32
+}
+
+// FogState returns the raw fog state (0 unexplored, 1 explored, 2
+// visible) of a tile for a player, or Unexplored for inactive players.
+func (w *World) FogState(player uint8, x, y int) uint8 {
+	if player >= MaxPlayers || !w.players[player].Active {
+		return fog.Unexplored
+	}
+	return w.fogs[player].State(x, y)
 }

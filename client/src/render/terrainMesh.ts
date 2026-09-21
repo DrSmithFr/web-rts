@@ -1,19 +1,37 @@
 import * as THREE from 'three';
 
-// Builds the ground mesh from sim heights: one quad per tile with whole-
-// number corner heights, flat shading and per-tile colors. A 200x200 map
-// stays a single draw call.
+// Builds ground meshes from sim heights: one quad per tile with whole-
+// number corner heights, flat shading and per-tile colors. The map is
+// split into fixed-size chunks so the renderer can frustum-cull and
+// refresh fog per chunk; each chunk is one draw call.
 import { HEIGHT_SCALE, TERRAIN_COLORS } from './palette';
 
+export interface MeshWindow {
+  x0?: number;
+  y0?: number;
+  w?: number;
+  h?: number;
+  stride?: number;
+}
+
+// buildTerrainMesh builds (w x h) tiles starting at (x0, y0) of a map
+// whose height array has stride+1 samples per row. Defaults: whole map.
 export function buildTerrainMesh(
   size: number,
   tiles: Uint8Array,
   heights: Uint16Array,
+  win?: MeshWindow,
 ): THREE.Mesh {
-  const vertexCount = size * size * 4;
+  const x0 = win?.x0 ?? 0;
+  const y0 = win?.y0 ?? 0;
+  const w = win?.w ?? size;
+  const h = win?.h ?? size;
+  const stride = win?.stride ?? size + 1;
+
+  const vertexCount = w * h * 4;
   const positions = new Float32Array(vertexCount * 3);
   const colors = new Float32Array(vertexCount * 3);
-  const indices = new Uint32Array(size * size * 6);
+  const indices = new Uint32Array(w * h * 6);
 
   const color = new THREE.Color();
   const corner = [
@@ -24,16 +42,18 @@ export function buildTerrainMesh(
   ];
 
   let v = 0;
-  for (let ty = 0; ty < size; ty++) {
-    for (let tx = 0; tx < size; tx++) {
-      const tile = tiles[ty * size + tx];
+  for (let ty = 0; ty < h; ty++) {
+    for (let tx = 0; tx < w; tx++) {
+      const mapX = x0 + tx;
+      const mapY = y0 + ty;
+      const tile = tiles[mapY * size + mapX];
       color.setHex(TERRAIN_COLORS[tile] ?? 0xff00ff);
       const base = v;
       for (const [cx, cy] of corner) {
-        const h = heights[(ty + cy) * (size + 1) + (tx + cx)];
-        positions[v * 3] = tx + cx;
-        positions[v * 3 + 1] = h * HEIGHT_SCALE;
-        positions[v * 3 + 2] = ty + cy;
+        const hh = heights[(mapY + cy) * stride + (mapX + cx)];
+        positions[v * 3] = mapX + cx;
+        positions[v * 3 + 1] = hh * HEIGHT_SCALE;
+        positions[v * 3 + 2] = mapY + cy;
         colors[v * 3] = color.r;
         colors[v * 3 + 1] = color.g;
         colors[v * 3 + 2] = color.b;

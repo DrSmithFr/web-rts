@@ -16,8 +16,10 @@ import (
 
 	"rts/sim/building"
 	"rts/sim/entity"
+	"rts/sim/fog"
 	"rts/sim/hash"
 	"rts/sim/orders"
+	"rts/sim/path"
 	"rts/sim/proto"
 	"rts/sim/rng"
 	"rts/sim/worldgen"
@@ -25,7 +27,7 @@ import (
 
 const (
 	// WorldVersion bumps whenever the hash layout changes.
-	WorldVersion uint64 = 3
+	WorldVersion uint64 = 4
 
 	// HashPeriodTicks is how often peers exchange state hashes on the
 	// wire (and how often replays checkpoint).
@@ -34,7 +36,7 @@ const (
 	// MaxPlayers is the fixed player table size.
 	MaxPlayers = 8
 
-	hashLabel = "rts.world/v3"
+	hashLabel = "rts.world/v4"
 )
 
 // World is the full simulation state.
@@ -50,17 +52,35 @@ type World struct {
 	units     *entity.Store[Unit]
 	nodes     *entity.Store[Node]
 	buildings *entity.Store[Building]
+	fields    *entity.Store[path.Field]
+	occupied  []bool
+	fogs      [MaxPlayers]*fog.Grid
 }
 
-// NewWorld creates the deterministic world for one game seed, including
-// the shared map, resource nodes and per-player starting economy.
+// NewWorld creates the default-sized deterministic world for one seed.
+func NewWorld(seed uint64) *World {
+	return NewWorldSize(seed, worldgen.DefaultSize, worldgen.DefaultPlayers)
+}
+
+// NewWorldSize creates a deterministic world with a custom map size.
 // Generation failure is a programming error and panics identically on
 // every peer.
-func NewWorld(seed uint64) *World {
-	m, err := worldgen.Generate(seed, worldgen.DefaultSize, worldgen.DefaultPlayers)
+func NewWorldSize(seed uint64, size, players int) *World {
+	m, err := worldgen.Generate(seed, size, players)
 	if err != nil {
 		panic(fmt.Sprintf("core: worldgen: %v", err))
 	}
+	return newWorld(seed, m)
+}
+
+// NewWorldWithMap builds a world around a hand-made map (tests and
+// scenario tools).
+func NewWorldWithMap(seed uint64, m *worldgen.Map) *World {
+	return newWorld(seed, m)
+}
+
+func newWorld(seed uint64, m *worldgen.Map) *World {
+	size := m.Grid().Size()
 	w := &World{
 		seed:      seed,
 		gameMap:   m,
@@ -69,8 +89,14 @@ func NewWorld(seed uint64) *World {
 		units:     entity.New[Unit](),
 		nodes:     entity.New[Node](),
 		buildings: entity.New[Building](),
+		fields:    entity.New[path.Field](),
+		occupied:  make([]bool, size*size),
+	}
+	for i := 0; i < MaxPlayers; i++ {
+		w.fogs[i] = fog.New(size)
 	}
 	w.initEconomy()
+	w.updateVision()
 	return w
 }
 
@@ -94,6 +120,12 @@ func (w *World) BuildingDefs() *building.Table { return w.bdefs }
 
 // PopCap returns the population cap for a player.
 func (w *World) PopCap(owner uint8) int32 { return w.popCap(owner) }
+
+// Fields returns the flow-field store (debug tooling).
+func (w *World) Fields() *entity.Store[path.Field] { return w.fields }
+
+// Fog returns a player's fog layer.
+func (w *World) Fog(player uint8) *fog.Grid { return w.fogs[player] }
 
 // Tick returns the number of simulation ticks already executed.
 func (w *World) Tick() uint32 { return w.tick }
@@ -124,6 +156,8 @@ func (w *World) Step(due []proto.Order) {
 			ok = w.applyStop(o.Player, o.Payload)
 		case orders.Train:
 			ok = w.applyTrain(o.Player, o.Payload)
+		case orders.MoveGroup:
+			ok = w.applyMoveGroup(o.Player, o.Payload)
 		default:
 			w.rejected++
 			continue
@@ -136,6 +170,7 @@ func (w *World) Step(due []proto.Order) {
 	}
 	w.updateUnits()
 	w.updateBuildings()
+	w.updateVision()
 	for d := rng.Domain(0); d < rng.DomainCount; d++ {
 		w.streams.Next(d)
 	}
@@ -163,6 +198,9 @@ func (w *World) Hash() uint64 {
 			h.WriteU64(uint64(int64(p.Res[k])))
 		}
 		h.WriteU64(uint64(int64(p.Pop)))
+		if p.Active {
+			w.fogs[i].AppendState(h, "rts.fog/v1")
+		}
 	}
 	h.WriteU32(uint32(w.units.Len()))
 	w.units.Each(func(id entity.ID, u *Unit) {

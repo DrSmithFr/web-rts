@@ -84,6 +84,14 @@ func (m *Map) Nodes() []Node { return m.nodes }
 // Hash returns the canonical map digest.
 func (m *Map) Hash() uint64 { return m.digest }
 
+// Custom wraps a hand-made grid, spawns and nodes into a Map (tests and
+// scenario tools). The digest is computed like a generated map's.
+func Custom(grid *terrain.Grid, spawns [][2]int, nodes []Node) *Map {
+	m := &Map{grid: grid, spawns: spawns, nodes: nodes}
+	m.digest = hashMap(m)
+	return m
+}
+
 // Generate builds a map for the given seed, size (tiles per side) and
 // player count.
 func Generate(seed uint64, size, players int) (*Map, error) {

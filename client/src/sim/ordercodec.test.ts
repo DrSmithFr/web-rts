@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPayload,
   gatherPayload,
+  moveGroupPayload,
   movePayload,
   stopPayload,
   trainPayload,
@@ -56,6 +57,11 @@ function encode(kind: string, args: string): Uint8Array {
       return stopPayload(args.split(';').map(Number));
     case 'train':
       return trainPayload(Number(args));
+    case 'move-group': {
+      const [idsPart, xy] = args.split(':');
+      const [x, y] = xy.split(',');
+      return moveGroupPayload(idsPart.split(';').map(Number), Number(x), Number(y));
+    }
     default:
       throw new Error(`unknown kind ${kind}`);
   }

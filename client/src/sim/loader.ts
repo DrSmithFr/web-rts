@@ -18,6 +18,7 @@ export interface RawSim {
   buildingsBlob(id: number): Uint8Array;
   economyBlob(id: number): Uint8Array;
   defs(id: number): BuildingDefJson[];
+  fogBlob(id: number, player: number): Uint8Array;
 }
 
 export interface BuildingDefJson {

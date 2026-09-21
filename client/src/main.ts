@@ -2,11 +2,15 @@ import * as THREE from 'three';
 
 import { SimWorld, seedFromLocation, type BuildingDef, type BuildingRec, type NodeRec, type UnitRec } from './sim/bridge';
 import { loadSim } from './sim/loader';
-import { OrderKind, buildPayload, gatherPayload, movePayload, trainPayload } from './sim/ordercodec';
+import { OrderKind, buildPayload, gatherPayload, moveGroupPayload, trainPayload } from './sim/ordercodec';
 import { FixedStepLoop } from './engine/loop';
+import { Interpolated } from './engine/interpolate';
+import { FogView } from './render/fogView';
+import { GroundChunks } from './render/terrainChunks';
+import { Minimap } from './render/minimap';
+import type { RenderUnit } from './render/actors';
 import { Selection, normalizeRect, selectInRect, type ScreenPoint } from './engine/selection';
 import { createScene } from './render/scene';
-import { buildTerrainMesh } from './render/terrainMesh';
 import { buildMapObjects } from './render/objects';
 import { buildNodeObjects } from './render/nodes';
 import { buildActors } from './render/actors';
@@ -61,7 +65,8 @@ try {
   console.info(`map ${size}x${size} hash=${world.mapHashHex()}`);
 
   const { renderer, scene, camera } = createScene(canvas, size);
-  scene.add(buildTerrainMesh(size, tiles, heights));
+  const ground = new GroundChunks(size, tiles, heights);
+  scene.add(ground.group);
   scene.add(buildMapObjects(size, heights, world.spawns()).group);
 
   let nodes = world.nodes();
@@ -78,6 +83,20 @@ try {
     for (const n of nodes) nodeByTile.set(n.tileY * size + n.tileX, n);
   };
   refreshNodeIndex();
+
+  const fogView = new FogView(size, world.fogBlob(LOCAL_PLAYER));
+  ground.setFog(fogView);
+  nodesObj.setFog(fogView);
+
+  const minimapCanvas = document.querySelector<HTMLCanvasElement>('#minimap')!;
+  minimapCanvas.width = 168;
+  minimapCanvas.height = 168;
+  const minimap = new Minimap(minimapCanvas, size, tiles);
+  minimap.onPick = (x, y) => rtsCam.focus(x + 0.5, y + 0.5);
+  const minimapEl = document.querySelector<HTMLDivElement>('#minimapbox')!;
+  minimapEl.style.display = 'block';
+
+  const interp = new Interpolated();
 
   const rtsCam = new RtsCamera(camera, size);
   const home = world.spawns()[LOCAL_PLAYER] ?? { x: size / 2, y: size / 2 };
@@ -108,7 +127,6 @@ try {
 
   // --- picking ----------------------------------------------------------
   const raycaster = new THREE.Raycaster();
-  const groundMesh = scene.children.find((c) => c instanceof THREE.Mesh)!;
   const proj = new THREE.Vector3();
 
   function tileAt(clientX: number, clientY: number): number | null {
@@ -117,7 +135,7 @@ try {
       -(clientY / window.innerHeight) * 2 + 1,
     );
     raycaster.setFromCamera(ndc, camera);
-    const hits = raycaster.intersectObject(groundMesh, false);
+    const hits = raycaster.intersectObjects(ground.meshes, false);
     if (hits.length === 0) return null;
     const tx = Math.floor(hits[0].point.x);
     const ty = Math.floor(hits[0].point.z);
@@ -206,8 +224,7 @@ try {
     if (ids.length === 0) return;
     const tx = tile % size;
     const ty = Math.floor(tile / size);
-    const items = ids.map((id) => ({ id, x16: Math.min(65535, tx * 16 + 8), y16: Math.min(65535, ty * 16 + 8) }));
-    world.order(LOCAL_PLAYER, OrderKind.Move, movePayload(items));
+    world.order(LOCAL_PLAYER, OrderKind.MoveGroup, moveGroupPayload(ids, tx * 16 + 8, ty * 16 + 8));
   }
 
   function issueGather(node: NodeRec): void {
@@ -424,7 +441,7 @@ try {
       return;
     }
     const node = nodeByTile.get(tile);
-    if (node) {
+    if (node && node.kind !== 5) {
       hoverEl.textContent =
         node.amount > 0
           ? `${tn(KIND_NAMES[node.kind])} · ${node.amount}`
@@ -493,17 +510,37 @@ try {
   let smoothedMs = 16;
   let frameStart = performance.now();
   let lastLoggedTick = -1;
+  let lastFogTick = -1;
+
+  function commitSnapshot(): void {
+    units = world.units();
+    interp.commit(units.map((u) => [u.id, { x: u.x, y: u.y }] as [number, { x: number; y: number }]));
+  }
 
   const loop = new FixedStepLoop(
-    () => world.step(),
+    () => {
+      world.step();
+      commitSnapshot();
+    },
     () => {
       const now = performance.now();
       smoothedMs = smoothedMs * 0.9 + (now - frameStart) * 0.1;
       frameStart = now;
 
-      units = world.units();
-      buildings = world.buildings();
-      actors.setUnits(units);
+      const alpha = loop.alpha();
+      const renderUnits: RenderUnit[] = [];
+      for (const u of units) {
+        const mine = u.owner === LOCAL_PLAYER;
+        if (!mine && !fogView.visible(Math.floor(u.x), Math.floor(u.y))) continue;
+        const p = interp.get(u.id, alpha) ?? { x: u.x, y: u.y };
+        const moving = u.state === 1;
+        const yOff = moving ? Math.abs(Math.sin(now * 0.012 + u.id)) * 0.09 : 0;
+        renderUnits.push({ id: u.id, owner: u.owner, x: p.x, y: p.y, yOff, carried: u.carried });
+      }
+      actors.setUnits(renderUnits);
+      buildings = world.buildings().filter(
+        (b) => b.owner === LOCAL_PLAYER || fogView.visible(b.tileX, b.tileY),
+      );
       actors.setBuildings(buildings, defById);
 
       const tick = world.tick();
@@ -514,6 +551,12 @@ try {
         economy = world.economy();
         renderHud();
         renderPanel();
+      }
+      if (tick !== lastFogTick) {
+        lastFogTick = tick;
+        fogView.update(world.fogBlob(LOCAL_PLAYER));
+        ground.setFog(fogView);
+        nodesObj.setFog(fogView);
       }
 
       if (placing && lastTile !== null) {
@@ -528,6 +571,12 @@ try {
 
       driveCamera();
       rtsCam.update();
+      ground.cull(camera);
+      minimap.draw(fogView, renderUnits, {
+        x: rtsCam.target.x,
+        z: rtsCam.target.z,
+        view: Math.min(size, rtsCam.dist * 1.2),
+      });
       renderer.render(scene, camera);
 
       tickEl.textContent = String(tick);

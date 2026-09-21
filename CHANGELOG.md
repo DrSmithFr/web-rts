@@ -5,6 +5,40 @@ merges (`vNN-phase-name`).
 
 ## Unreleased
 
+## [v04-pathfinding-fog-interpolation] - 2026-09-21
+
+Phase 4: flow-field pathfinding with formations, per-player three-state
+fog of war, and 60 fps position interpolation between 20 Hz ticks.
+
+### Added
+
+- `sim/path`: deterministic BFS flow fields with no corner cutting,
+  fixed tie-break order and a 64-slot spiral formation table; unit tests
+  on hand-drawn ASCII maps (corridors, lakes, diagonal gaps, waits).
+- `sim/fog`: three-state (unexplored / explored / visible) per-player
+  fog with radius vision (villager 6, building 8, site 4), decay to
+  explored, 2-bit packed wire format; part of the world hash
+  (`rts.world/v4`).
+- Core: group move order (`MoveGroup`) with shared flow field and
+  deterministic formation slots; buildings and sites now block movement
+  through an occupancy grid; unreachable moves wait instead of sliding;
+  arrival snaps exactly onto the formation slot.
+- Bridge: `fogBlob(id, player)`.
+- `client`: chunked ground (32-tile meshes, frustum culling, per-chunk
+  fog repaint); fog hides nodes and enemy entities and dims explored
+  ground; units interpolate between ticks (`Interpolated` + loop alpha)
+  with a rigid walking bob; clickable canvas minimap with fog and
+  camera box; right-click now issues one formation group move.
+- Spec alignment: deterministic 1000x1000 map generation pinned by a
+  test (~150 ms, 250k nodes); oil stays invisible until the Modern era.
+
+### Changed
+
+- Replays regenerated for `rts.world/v4`; new `phase4_paths.rts`
+  scenario (group move across terrain, second move, fog reveal) is
+  recorded, verified and parity-checked; `make test-det` now gates three
+  replays.
+
 ## [v03-villagers-resources-construction] - 2026-09-21
 
 Phase 3: villagers harvest five resources, build the first buildings and

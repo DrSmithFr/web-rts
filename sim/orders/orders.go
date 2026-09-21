@@ -7,11 +7,12 @@ package orders
 // Gameplay order kinds (payload kinds; proto.KindNoop stays 0). They are
 // untyped so both proto.Kind and uint16 contexts accept them.
 const (
-	Move   = 1
-	Gather = 2
-	Build  = 3
-	Stop   = 4
-	Train  = 5
+	Move      = 1
+	Gather    = 2
+	Build     = 3
+	Stop      = 4
+	Train     = 5
+	MoveGroup = 6
 )
 
 // MoveItem is one unit destination in a group move.
@@ -81,6 +82,19 @@ func StopPayload(ids []uint32) []byte {
 func TrainPayload(building uint32) []byte {
 	w := NewWriter()
 	w.Uvarint(uint64(building))
+	return w.Bytes()
+}
+
+// MoveGroupPayload encodes a group move to one base tile; the simulation
+// assigns formation slots deterministically in id order.
+func MoveGroupPayload(ids []uint32, x16, y16 uint16) []byte {
+	w := NewWriter()
+	w.Uvarint(uint64(len(ids)))
+	for _, id := range ids {
+		w.Uvarint(uint64(id))
+	}
+	w.U16(x16)
+	w.U16(y16)
 	return w.Bytes()
 }
 

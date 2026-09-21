@@ -185,6 +185,10 @@ export class SimWorld {
   defs(): BuildingDef[] {
     return this.sim.defs(this.id);
   }
+
+  fogBlob(player: number): Uint8Array {
+    return this.sim.fogBlob(this.id, player);
+  }
 }
 
 // Seed comes from the ?seed= query parameter, as a decimal or 0x integer

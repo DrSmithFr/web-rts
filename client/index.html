@@ -112,6 +112,23 @@
         opacity: 0.45;
         cursor: default;
       }
+      #minimapbox {
+        position: fixed;
+        bottom: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(10, 12, 18, 0.85);
+        border: 1px solid #2c3345;
+        border-radius: 6px;
+        padding: 4px;
+        display: none;
+        line-height: 0;
+        user-select: none;
+      }
+      #minimap {
+        border-radius: 4px;
+        cursor: crosshair;
+      }
     </style>
   </head>
   <body>
@@ -136,6 +153,9 @@
       <span><span class="k">pop</span> <span id="res-pop">0/0</span></span>
     </div>
     <div id="panel"></div>
+    <div id="minimapbox">
+      <canvas id="minimap" width="168" height="168"></canvas>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

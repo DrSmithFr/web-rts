@@ -32,6 +32,7 @@
 //	                          trainReq u8, tileX u16, tileY u16, pad u8
 //	economyBlob(id)       -> Uint8Array, 32-byte records per player slot:
 //	                          active u8, pop u16, popCap u16, res u32 * 6
+//	fogBlob(id, player)   -> Uint8Array of 2-bit fog states, row-major
 //	defs(id)              -> array of building defs {id,key,costWood,
 //	                          costStone,buildTicks,popRoom,size,dropoff,
 //	                          trainFood,trainTicks}
@@ -48,6 +49,7 @@ import (
 
 	"rts/sim/core"
 	"rts/sim/entity"
+	"rts/sim/fog"
 	"rts/sim/lockstep"
 	"rts/sim/proto"
 )
@@ -256,6 +258,18 @@ func economyBlob(this js.Value, args []js.Value) any {
 	})
 }
 
+func fogBlob(this js.Value, args []js.Value) any {
+	w := mustID(args)
+	if len(args) < 2 {
+		panic("RTSSim: fogBlob requires (id, player)")
+	}
+	g := w.world.Fog(uint8(args[1].Int()))
+	buf := g.Packed(make([]byte, 0, fog.PackedLen(g.Size())))
+	out := js.Global().Get("Uint8Array").New(len(buf))
+	js.CopyBytesToJS(out, buf)
+	return out
+}
+
 func defs(this js.Value, args []js.Value) any {
 	arr := js.Global().Get("Array").New()
 	for _, d := range mustID(args).world.BuildingDefs().Defs() {
@@ -294,6 +308,7 @@ func main() {
 	obj.Set("buildingsBlob", js.FuncOf(buildingsBlob))
 	obj.Set("economyBlob", js.FuncOf(economyBlob))
 	obj.Set("defs", js.FuncOf(defs))
+	obj.Set("fogBlob", js.FuncOf(fogBlob))
 	obj.Set("version", js.FuncOf(version))
 	js.Global().Set("RTSSim", obj)
 	select {}

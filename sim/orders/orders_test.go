@@ -61,6 +61,15 @@ func encodeArgs(t *testing.T, kind, args string) []byte {
 		return StopPayload(ids)
 	case "train":
 		return TrainPayload(u32(t, args))
+	case "move-group":
+		idsxy, _, _ := strings.Cut(args, ":")
+		var ids []uint32
+		for _, s := range strings.Split(idsxy, ";") {
+			ids = append(ids, u32(t, s))
+		}
+		xyPart := args[len(idsxy)+1:]
+		xs, ys, _ := strings.Cut(xyPart, ",")
+		return MoveGroupPayload(ids, u16(t, xs), u16(t, ys))
 	}
 	t.Fatalf("unknown kind %q", kind)
 	return nil
@@ -104,6 +113,23 @@ func decodeArgs(t *testing.T, kind, args string, raw []byte) {
 	case "train":
 		if uint32(r.Uvarint()) != u32(t, args) {
 			t.Error("train mismatch")
+		}
+	case "move-group":
+		idsxy, _, _ := strings.Cut(args, ":")
+		ids := strings.Split(idsxy, ";")
+		n := int(r.Uvarint())
+		if n != len(ids) {
+			t.Fatalf("move-group n %d want %d", n, len(ids))
+		}
+		for _, want := range ids {
+			if uint32(r.Uvarint()) != u32(t, want) {
+				t.Error("move-group id mismatch")
+			}
+		}
+		xyPart := args[len(idsxy)+1:]
+		xs, ys, _ := strings.Cut(xyPart, ",")
+		if r.U16() != u16(t, xs) || r.U16() != u16(t, ys) {
+			t.Error("move-group coords mismatch")
 		}
 	}
 	if !r.OK() {
