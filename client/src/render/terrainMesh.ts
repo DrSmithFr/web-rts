@@ -40,12 +40,13 @@ export function buildTerrainMesh(
         v++;
       }
       const f = (base / 4) * 6;
+      // Counter-clockwise seen from above so face normals point +y.
       indices[f] = base;
-      indices[f + 1] = base + 1;
-      indices[f + 2] = base + 2;
+      indices[f + 1] = base + 2;
+      indices[f + 2] = base + 1;
       indices[f + 3] = base;
-      indices[f + 4] = base + 2;
-      indices[f + 5] = base + 3;
+      indices[f + 4] = base + 3;
+      indices[f + 5] = base + 2;
     }
   }
 

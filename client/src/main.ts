@@ -93,6 +93,7 @@ try {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture(e.pointerId);
     if (e.button === 0) {
       leftStart = { x: e.clientX, y: e.clientY };
     } else if (e.button === 2) {
@@ -122,6 +123,10 @@ try {
   });
 
   window.addEventListener('pointerup', (e) => {
+    if (e.button === 2) {
+      rightStart = null;
+      return;
+    }
     if (e.button !== 0 || !leftStart) return;
     const dragged =
       Math.abs(e.clientX - leftStart.x) > 4 || Math.abs(e.clientY - leftStart.y) > 4;
