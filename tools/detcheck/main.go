@@ -34,6 +34,8 @@ func main() {
 			err = recordScenario(*record, *seed, uint32(*ticks), uint32(*noopTick))
 		case "economy":
 			err = recordEconomy(*record, *seed, uint32(*ticks), uint32(*noopTick))
+		case "paths":
+			err = recordPaths(*record, *seed, uint32(*ticks), uint32(*noopTick))
 		default:
 			fail(fmt.Errorf("unknown scenario %q", *scenario))
 		}
@@ -158,4 +160,42 @@ func recordEconomy(path string, seed uint64, ticks, noopEvery uint32) error {
 
 func sortOrders(os []proto.Order) {
 	sort.SliceStable(os, func(i, j int) bool { return os[i].Tick < os[j].Tick })
+}
+
+// recordPaths drives a group move across rough terrain plus a follow-up
+// scatter move, exercising flow fields, formations and fog reveal.
+func recordPaths(path string, seed uint64, ticks, noopEvery uint32) error {
+	probe := core.NewWorld(seed)
+	var ids []uint32
+	probe.Units().Each(func(id entity.ID, u *core.Unit) {
+		if u.Owner == 0 && len(ids) < 3 {
+			ids = append(ids, uint32(id))
+		}
+	})
+	if len(ids) != 3 {
+		return fmt.Errorf("paths probe: only %d units", len(ids))
+	}
+	spawn := probe.Map().Spawns()[0]
+	r := &Replay{Seed: seed, Ticks: ticks}
+	add := func(tick uint32, kind uint16, payload []byte) {
+		r.Orders = append(r.Orders, proto.Order{
+			Tick: tick, Player: 0, Kind: proto.Kind(kind), Payload: payload,
+		})
+	}
+	add(1, orders.MoveGroup, orders.MoveGroupPayload(ids,
+		uint16((spawn[0]-20)*16+8), uint16((spawn[1]+14)*16+8)))
+	add(240, orders.MoveGroup, orders.MoveGroupPayload(ids,
+		uint16((spawn[0]+16)*16+8), uint16((spawn[1]+16)*16+8)))
+	for k, t := uint8(0), uint32(0); t < ticks; t += noopEvery {
+		add(t, 0, []byte{'N', k})
+		k++
+	}
+	sortOrders(r.Orders)
+	r.FinalHash = r.Run(core.HashPeriodTicks, nil)
+	if err := r.Write(path); err != nil {
+		return err
+	}
+	fmt.Printf("recorded %s seed=%#x ticks=%d orders=%d final=%016x\n",
+		path, seed, ticks, len(r.Orders), r.FinalHash)
+	return nil
 }
