@@ -33,6 +33,13 @@ export class TimeAccumulator {
     }
     return steps;
   }
+
+  // fraction is the elapsed part of the next tick, in [0, 1); renderers
+  // use it to interpolate between the last two simulation snapshots.
+  fraction(): number {
+    const f = this.acc / this.tickMs;
+    return f < 0 ? 0 : f > 1 ? 1 : f;
+  }
 }
 
 export interface FrameScheduler {
@@ -65,6 +72,10 @@ export class FixedStepLoop {
 
   stop(): void {
     this.running = false;
+  }
+
+  alpha(): number {
+    return this.acc.fraction();
   }
 
   private tick(): void {
