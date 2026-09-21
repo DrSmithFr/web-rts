@@ -29,6 +29,7 @@ func main() {
 		{"build", "3:1:7:9", hexOf(orders.BuildPayload(3, 1, 7, 9))},
 		{"stop", "1;2;3", hexOf(orders.StopPayload([]uint32{1, 2, 3}))},
 		{"train", "196608", hexOf(orders.TrainPayload(196608))},
+		{"move-group", "7;8;9:112,128", hexOf(orders.MoveGroupPayload([]uint32{7, 8, 9}, 112, 128))},
 		{"move", "", hexOf(orders.MovePayload(nil))},
 	}
 	for _, v := range vecs {

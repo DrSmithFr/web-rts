@@ -8,6 +8,7 @@ export const OrderKind = {
   Build: 3,
   Stop: 4,
   Train: 5,
+  MoveGroup: 6,
 } as const;
 
 export interface MoveItem {
@@ -74,6 +75,17 @@ export function stopPayload(ids: number[]): Uint8Array {
 export function trainPayload(building: number): Uint8Array {
   const w = new Writer();
   w.uvarint(building);
+  return w.out();
+}
+
+// moveGroupPayload: group move to one base tile; the sim assigns
+// formation slots deterministically in id order.
+export function moveGroupPayload(ids: number[], x16: number, y16: number): Uint8Array {
+  const w = new Writer();
+  w.uvarint(ids.length);
+  for (const id of ids) w.uvarint(id);
+  w.u16(x16);
+  w.u16(y16);
   return w.out();
 }
 
