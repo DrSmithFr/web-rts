@@ -5,5 +5,14 @@
   "hud.status.failed": "simulation failed to start",
   "hud.tick": "tick",
   "hud.hash": "hash",
-  "hud.fps": "fps"
+  "hud.fps": "fps",
+  "hud.map": "map",
+  "hud.selected": "selected",
+  "hud.height": "h",
+  "terrain.grass": "grass",
+  "terrain.forest": "forest",
+  "terrain.rock": "rock",
+  "terrain.sand": "sand",
+  "terrain.shallow": "shallow water",
+  "terrain.deep": "deep water"
 }
