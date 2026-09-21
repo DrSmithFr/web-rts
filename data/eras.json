@@ -1,0 +1,44 @@
+{
+  "eras": [
+    {
+      "id": 0,
+      "key": "prehistory",
+      "costFood": 0,
+      "costGold": 0,
+      "reqBuilding": 0,
+      "ageTicks": 0
+    },
+    {
+      "id": 1,
+      "key": "antiquity",
+      "costFood": 250,
+      "costGold": 0,
+      "reqBuilding": 3,
+      "ageTicks": 400
+    },
+    {
+      "id": 2,
+      "key": "medieval",
+      "costFood": 250,
+      "costGold": 125,
+      "reqBuilding": 5,
+      "ageTicks": 800
+    },
+    {
+      "id": 3,
+      "key": "renaissance",
+      "costFood": 300,
+      "costGold": 400,
+      "reqBuilding": 6,
+      "ageTicks": 1200
+    },
+    {
+      "id": 4,
+      "key": "modern",
+      "costFood": 400,
+      "costGold": 800,
+      "reqBuilding": 7,
+      "ageTicks": 1600
+    }
+  ]
+}

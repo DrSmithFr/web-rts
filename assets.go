@@ -13,3 +13,13 @@ var BuildingsJSON []byte
 //
 //go:embed data/units.json
 var UnitsJSON []byte
+
+// ErasJSON is the raw content of data/eras.json.
+//
+//go:embed data/eras.json
+var ErasJSON []byte
+
+// TechsJSON is the raw content of data/techs.json.
+//
+//go:embed data/techs.json
+var TechsJSON []byte

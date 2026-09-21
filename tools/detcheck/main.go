@@ -38,6 +38,8 @@ func main() {
 			err = recordPaths(*record, *seed, uint32(*ticks), uint32(*noopTick))
 		case "combat":
 			err = recordCombat(*record, *seed, uint32(*ticks), uint32(*noopTick))
+		case "eras":
+			err = recordEras(*record, *seed, uint32(*ticks), uint32(*noopTick))
 		default:
 			fail(fmt.Errorf("unknown scenario %q", *scenario))
 		}
@@ -164,32 +166,6 @@ func sortOrders(os []proto.Order) {
 	sort.SliceStable(os, func(i, j int) bool { return os[i].Tick < os[j].Tick })
 }
 
-// firstWorldWithBarracks probes candidate barracks offsets against a fresh
-// world per candidate and returns the first that actually gets built, plus
-// the coordinates used.
-func firstWorldWithBarracks(seed uint64, player uint8, builder entity.ID, spawn [2]int) ([2]int, error) {
-	candidates := [][2]int{{-6, 4}, {4, -6}, {6, 4}, {-4, 6}, {-6, -4}, {4, 6}}
-	for _, o := range candidates {
-		tx, ty := spawn[0]+o[0], spawn[1]+o[1]
-		w := core.NewWorld(seed)
-		w.Step([]proto.Order{{Player: player, Kind: orders.Build,
-			Payload: orders.BuildPayload(uint32(builder), 4, uint16(tx), uint16(ty))}})
-		for i := 0; i < 260; i++ {
-			w.Step(nil)
-		}
-		ok := false
-		w.Buildings().Each(func(_ entity.ID, b *core.Building) {
-			if b.DefID == 4 && b.Owner == player {
-				ok = true
-			}
-		})
-		if ok {
-			return [2]int{tx, ty}, nil
-		}
-	}
-	return [2]int{}, fmt.Errorf("combat probe: no barracks-buildable offset")
-}
-
 func playerUnitIDs(w *core.World, owner uint8) []entity.ID {
 	var ids []entity.ID
 	w.Units().Each(func(id entity.ID, u *core.Unit) {
@@ -200,10 +176,108 @@ func playerUnitIDs(w *core.World, owner uint8) []entity.ID {
 	return ids
 }
 
-// recordCombat drives a two-player skirmish: deer hunt with corpse
-// harvest, barracks on both sides, a training queue that stalls on gold,
-// a long patrol into enemy territory and cross-base attack orders that
-// produce counterattacks, deaths and population release.
+func nearestNode(w *core.World, from *core.Unit, kind resource.Kind) entity.ID {
+	var best entity.ID
+	bd := int64(1) << 62
+	w.Nodes().Each(func(id entity.ID, n *core.Node) {
+		if n.Kind != kind || n.Amount <= 0 {
+			return
+		}
+		dx, dy := int64(n.X-from.X), int64(n.Y-from.Y)
+		if d := dx*dx + dy*dy; d < bd {
+			bd, best = d, id
+		}
+	})
+	return best
+}
+
+// buildOffsets are candidate building spots around a spawn, tried in order.
+var buildOffsets = [][2]int{{-6, 4}, {4, -6}, {6, 4}, {-4, 6}, {-6, -4}, {4, 6}}
+
+// staged is a recorder that mirrors its own order stream into a live probe
+// world, so goals can depend on world state while the recorded stream stays
+// reproducible for every peer.
+type staged struct {
+	r     *Replay
+	probe *core.World
+	t     uint32
+	due   []proto.Order
+}
+
+func (s *staged) push(player uint8, kind uint16, payload []byte) {
+	order := proto.Order{Tick: s.t, Player: player, Kind: proto.Kind(kind), Payload: payload}
+	s.r.Orders = append(s.r.Orders, order)
+	s.due = append(s.due, order)
+}
+
+// buildingExists reports any site (including under construction) for a
+// player and def in the probe.
+func (s *staged) buildingExists(player uint8, defID uint16) bool {
+	found := false
+	s.probe.Buildings().Each(func(_ entity.ID, b *core.Building) {
+		if b.Owner == player && b.DefID == defID {
+			found = true
+		}
+	})
+	return found
+}
+
+func (s *staged) completeBuilding(player uint8, defID uint16) entity.ID {
+	var id entity.ID
+	s.probe.Buildings().Each(func(eid entity.ID, b *core.Building) {
+		if b.Owner == player && b.DefID == defID && b.Progress == 0 {
+			id = eid
+		}
+	})
+	return id
+}
+
+// buildTry tracks one staged construction attempt across ticks.
+type buildTry struct {
+	next    int
+	waited  int
+	site    bool
+	givenIn bool
+}
+
+// tryBuilding issues at most one build order every couple of ticks, trying
+// the next candidate offset when the previous one failed. Returns true once
+// the building is complete.
+func (s *staged) tryBuilding(bt *buildTry, player uint8, builder entity.ID, spawn [2]int, defID uint16) bool {
+	if !bt.site && s.buildingExists(player, defID) {
+		bt.site = true
+	}
+	if bt.site {
+		return s.completeBuilding(player, defID) != 0
+	}
+	if bt.givenIn {
+		return false
+	}
+	if bt.waited > 0 {
+		bt.waited--
+		return false
+	}
+	if bt.next >= len(buildOffsets) {
+		bt.givenIn = true
+		return false
+	}
+	o := buildOffsets[bt.next]
+	bt.next++
+	tx, ty := spawn[0]+o[0], spawn[1]+o[1]
+	if tx < 0 || ty < 0 || tx >= 0xFFFF || ty >= 0xFFFF {
+		bt.waited = 2
+		return false
+	}
+	s.push(player, orders.Build, orders.BuildPayload(uint32(builder), defID, uint16(tx), uint16(ty)))
+	bt.waited = 2
+	return false
+}
+
+// recordCombat drives a two-player skirmish through the era ladder: deer
+// hunt with corpse harvest, age-ups to Antiquity, barracks on both sides,
+// training queues, a patrol and cross-base attacks producing counterattacks,
+// deaths and population release. Era gates make static tick schedules
+// impossible, so goals fire off live probe state.
 func recordCombat(path string, seed uint64, ticks, noopEvery uint32) error {
 	probe := core.NewWorld(seed)
 	spawns := probe.Map().Spawns()
@@ -212,7 +286,7 @@ func recordCombat(path string, seed uint64, ticks, noopEvery uint32) error {
 	}
 	p0 := playerUnitIDs(probe, 0)
 	p1 := playerUnitIDs(probe, 1)
-	if len(p0) < 3 || len(p1) < 1 {
+	if len(p0) < 3 || len(p1) < 3 {
 		return fmt.Errorf("combat probe: units p0=%d p1=%d", len(p0), len(p1))
 	}
 	v0 := probe.Units().Get(p0[0])
@@ -229,93 +303,182 @@ func recordCombat(path string, seed uint64, ticks, noopEvery uint32) error {
 	if deer == 0 {
 		return fmt.Errorf("combat probe: no deer found")
 	}
+	s := &staged{r: &Replay{Seed: seed, Ticks: ticks}, probe: probe}
+
+	// tick 1: deer hunt plus full gather on both sides
+	s.push(0, orders.Attack, orders.AttackPayload([]uint32{uint32(p0[0])}, uint32(deer)))
+	for _, id := range []entity.ID{p0[1], p0[2]} {
+		if n := nearestNode(probe, probe.Units().Get(id), resource.Food); n != 0 {
+			s.push(0, orders.Gather, orders.GatherPayload(uint32(id), uint32(n)))
+		}
+	}
+	for _, id := range p1 {
+		if n := nearestNode(probe, probe.Units().Get(id), resource.Food); n != 0 {
+			s.push(1, orders.Gather, orders.GatherPayload(uint32(id), uint32(n)))
+		}
+	}
+	s.probe.Step(s.due)
+	s.due = nil
+
+	var (
+		age0, age1, patrol0, train0, train1, atk0 bool
+		bar0, bar1                                buildTry
+	)
 	s0 := [2]int{spawns[0][0], spawns[0][1]}
 	s1 := [2]int{spawns[1][0], spawns[1][1]}
-	bar0, err := firstWorldWithBarracks(seed, 0, p0[1], s0)
-	if err != nil {
-		return err
-	}
-	bar1, err := firstWorldWithBarracks(seed, 1, p1[0], s1)
-	if err != nil {
-		return err
-	}
 
-	r := &Replay{Seed: seed, Ticks: ticks}
-	add := func(tick uint32, player uint8, kind uint16, payload []byte) {
-		r.Orders = append(r.Orders, proto.Order{
-			Tick: tick, Player: player, Kind: proto.Kind(kind), Payload: payload,
-		})
-	}
-	add(1, 0, orders.Attack, orders.AttackPayload([]uint32{uint32(p0[0])}, uint32(deer)))
-	add(1, 0, orders.Build, orders.BuildPayload(uint32(p0[1]), 4, uint16(bar0[0]), uint16(bar0[1])))
-	add(1, 1, orders.Build, orders.BuildPayload(uint32(p1[0]), 4, uint16(bar1[0]), uint16(bar1[1])))
-	add(1, 0, orders.Patrol, orders.PatrolPayload([]uint32{uint32(p0[2])},
-		uint16((s1[0]-10)*16+8), uint16(s1[1]*16+8)))
+	for t := uint32(1); t < ticks; t++ {
+		s.t = t
+		s.due = nil
 
-	// mirror the order stream in a probe world to resolve the barracks ids
-	pr := core.NewWorld(seed)
-	for _, o := range r.Orders {
-		// orders all target tick 1 here; replay semantics handled below
-		pr.Step(withTick(o, 1))
-	}
-	for i := 0; i < 300; i++ {
-		pr.Step(nil)
-	}
-	var barID0, barID1 entity.ID
-	pr.Buildings().Each(func(id entity.ID, b *core.Building) {
-		if b.DefID == 4 {
-			if b.Owner == 0 {
-				barID0 = id
+		ps := s.probe.Players()
+		if !age0 && ps[0].Res[resource.Food] >= 250 {
+			age0 = true
+			s.push(0, orders.AgeUp, orders.AgeUpPayload(1))
+		}
+		if !age1 && ps[1].Res[resource.Food] >= 250 {
+			age1 = true
+			s.push(1, orders.AgeUp, orders.AgeUpPayload(1))
+		}
+		if ps[0].Era >= 1 {
+			if s.tryBuilding(&bar0, 0, p0[1], s0, 4) && !train0 {
+				train0 = true
+				s.push(0, orders.Train, orders.TrainPayload(uint32(s.completeBuilding(0, 4)), 3))
 			}
-			if b.Owner == 1 {
-				barID1 = id
+			if !patrol0 && t > 1500 {
+				patrol0 = true
+				s.push(0, orders.Patrol, orders.PatrolPayload([]uint32{uint32(p0[2])},
+					uint16((s1[0]-10)*16+8), uint16(s1[1]*16+8)))
 			}
 		}
-	})
-	if barID0 == 0 || barID1 == 0 {
-		return fmt.Errorf("combat probe: barracks missing p0=%d p1=%d", barID0, barID1)
-	}
-	add(301, 1, orders.Train, orders.TrainPayload(uint32(barID1), 2))
-	add(302, 1, orders.Train, orders.TrainPayload(uint32(barID1), 2))
-	add(303, 0, orders.Train, orders.TrainPayload(uint32(barID0), 3))
-	add(304, 0, orders.Train, orders.TrainPayload(uint32(barID0), 3))
-	add(305, 0, orders.Train, orders.TrainPayload(uint32(barID0), 2))
-	for _, o := range r.Orders {
-		if o.Tick >= 301 {
-			pr.Step([]proto.Order{o})
+		if ps[1].Era >= 1 {
+			if s.tryBuilding(&bar1, 1, p1[0], s1, 4) && !train1 {
+				train1 = true
+				bid := uint32(s.completeBuilding(1, 4))
+				s.push(1, orders.Train, orders.TrainPayload(bid, 2))
+				s.push(1, orders.Train, orders.TrainPayload(bid, 2))
+			}
 		}
-	}
-	for i := 0; i < 1200; i++ {
-		pr.Step(nil)
-	}
-	var p1Lancers, p0Military []entity.ID
-	pr.Units().Each(func(id entity.ID, u *core.Unit) {
-		if u.Owner == 1 && u.DefID == 2 && len(p1Lancers) < 2 {
-			p1Lancers = append(p1Lancers, id)
+		if !atk0 && t >= 2200 {
+			var atkIDs, tgt []uint32
+			s.probe.Units().Each(func(id entity.ID, u *core.Unit) {
+				if u.Owner == 0 && (u.DefID == 3 || u.DefID == 2) && len(atkIDs) < 2 {
+					atkIDs = append(atkIDs, uint32(id))
+				}
+				if u.Owner == 1 && u.DefID == 2 && len(tgt) == 0 {
+					tgt = append(tgt, uint32(id))
+				}
+			})
+			if len(atkIDs) > 0 && len(tgt) > 0 {
+				atk0 = true
+				s.push(0, orders.Attack, orders.AttackPayload(atkIDs, tgt[0]))
+			}
 		}
-		if u.Owner == 0 && (u.DefID == 3 || u.DefID == 2) {
-			p0Military = append(p0Military, id)
-		}
-	})
-	if len(p1Lancers) == 0 {
-		return fmt.Errorf("combat probe: p1 trained no lancers")
-	}
-	add(1501, 1, orders.Attack, orders.AttackPayload(unit32s(p1Lancers), uint32(p0[2])))
-	if len(p0Military) > 0 {
-		add(1501, 0, orders.Attack, orders.AttackPayload(unit32s(p0Military), uint32(p1Lancers[0])))
-	}
-	for k, t := uint8(0), uint32(0); t < ticks; t += noopEvery {
-		add(t, 0, 0, []byte{'N', k})
-		k++
+		s.probe.Step(s.due)
 	}
 
-	sortOrders(r.Orders)
-	r.FinalHash = r.Run(core.HashPeriodTicks, nil)
-	if err := r.Write(path); err != nil {
+	sortOrders(s.r.Orders)
+	s.r.FinalHash = s.r.Run(core.HashPeriodTicks, nil)
+	if err := s.r.Write(path); err != nil {
 		return err
 	}
 	fmt.Printf("recorded %s seed=%#x ticks=%d orders=%d final=%016x\n",
-		path, seed, ticks, len(r.Orders), r.FinalHash)
+		path, seed, ticks, len(s.r.Orders), s.r.FinalHash)
+	return nil
+}
+
+// recordEras exercises the phase 6 ladder: age up to Antiquity, build a
+// barracks and a market, research a tech chain (prerequisites included),
+// train the medieval roster after ageing to Medieval, patrol toward the
+// relics and contest one with military.
+// recordEras exercises the phase 6 ladder within reach of the prehistory
+// economy: gather, age up to Antiquity, build barracks and market, chop
+// wood, research a prerequisite chain (forging then casting once affordable),
+// train a lancer and patrol.
+func recordEras(path string, seed uint64, ticks, noopEvery uint32) error {
+	probe := core.NewWorld(seed)
+	spawns := probe.Map().Spawns()
+	if len(spawns) < 1 {
+		return fmt.Errorf("eras probe: no spawns")
+	}
+	p0 := playerUnitIDs(probe, 0)
+	if len(p0) < 3 {
+		return fmt.Errorf("eras probe: p0 has %d units", len(p0))
+	}
+	s := &staged{r: &Replay{Seed: seed, Ticks: ticks}, probe: probe}
+
+	for _, id := range p0 {
+		if n := nearestNode(probe, probe.Units().Get(id), resource.Food); n != 0 {
+			s.push(0, orders.Gather, orders.GatherPayload(uint32(id), uint32(n)))
+		}
+	}
+	s.probe.Step(s.due)
+	s.due = nil
+
+	var (
+		age1, lumber, miner, techF, techS, train, patrol bool
+		bar, mar                                         buildTry
+	)
+	s0 := [2]int{spawns[0][0], spawns[0][1]}
+
+	for t := uint32(1); t < ticks; t++ {
+		s.t = t
+		s.due = nil
+		pl := s.probe.Players()[0]
+
+		if !age1 && pl.Res[resource.Food] >= 250 {
+			age1 = true
+			s.push(0, orders.AgeUp, orders.AgeUpPayload(1))
+		}
+		if pl.Era >= 1 {
+			barracksOK := s.tryBuilding(&bar, 0, p0[1], s0, 4)
+			if !lumber && pl.Res[resource.Wood] < 125 {
+				lumber = true
+				if w := nearestNode(probe, probe.Units().Get(p0[2]), resource.Wood); w != 0 {
+					s.push(0, orders.Gather, orders.GatherPayload(uint32(p0[2]), uint32(w)))
+				}
+			}
+			marketOK := false
+			if pl.Res[resource.Wood] >= 125 {
+				marketOK = s.tryBuilding(&mar, 0, p0[2], s0, 5)
+			}
+			if barracksOK && !miner {
+				miner = true
+				if g := nearestNode(probe, probe.Units().Get(p0[1]), resource.Gold); g != 0 {
+					s.push(0, orders.Gather, orders.GatherPayload(uint32(p0[1]), uint32(g)))
+				}
+			}
+			if barracksOK && !techF && pl.Res[resource.Gold] >= 50 {
+				techF = true
+				s.push(0, orders.Research, orders.ResearchPayload(1))
+			}
+			if techF && !techS && pl.Res[resource.Gold] >= 50 {
+				techS = true
+				s.push(0, orders.Research, orders.ResearchPayload(2))
+			}
+			if barracksOK && !train && pl.Res[resource.Food] >= 60 && pl.Res[resource.Gold] >= 20 {
+				train = true
+				s.push(0, orders.Train, orders.TrainPayload(uint32(s.completeBuilding(0, 4)), 2))
+			}
+			if !patrol && t > 2000 {
+				patrol = true
+				s.push(0, orders.Patrol, orders.PatrolPayload([]uint32{uint32(p0[0])},
+					uint16((s0[0]+10)*16+8), uint16(s0[1]*16+8)))
+			}
+			if marketOK && pl.Res[resource.Food] < 150 {
+				s.push(0, orders.Gather, orders.GatherPayload(uint32(p0[2]),
+					uint32(nearestNode(probe, probe.Units().Get(p0[2]), resource.Food))))
+			}
+		}
+		s.probe.Step(s.due)
+	}
+	sortOrders(s.r.Orders)
+	s.r.FinalHash = s.r.Run(core.HashPeriodTicks, nil)
+	if err := s.r.Write(path); err != nil {
+		return err
+	}
+	fmt.Printf("recorded %s seed=%#x ticks=%d orders=%d final=%016x\n",
+		path, seed, ticks, len(s.r.Orders), s.r.FinalHash)
 	return nil
 }
 

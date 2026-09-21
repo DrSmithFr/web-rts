@@ -12,12 +12,17 @@ import (
 	"rts/sim/units"
 )
 
-// speedOf returns a unit's per-tick move speed.
+// speedOf returns a unit's per-tick move speed, including tech bonuses.
 func (w *World) speedOf(u *Unit) fixed.F16 {
-	if d := w.udefs.Get(u.DefID); d != nil && d.Speed16 > 0 {
-		return fixed.F16(d.Speed16)
+	d := w.udefs.Get(u.DefID)
+	if d == nil || d.Speed16 <= 0 {
+		return VillagerSpeed
 	}
-	return VillagerSpeed
+	speed := d.Speed16
+	if u.Owner < MaxPlayers {
+		speed += w.players[u.Owner].Mods.Speed16[d.Class]
+	}
+	return fixed.F16(speed)
 }
 
 // visionOf returns a unit's fog reveal radius in tiles.
@@ -26,6 +31,18 @@ func (w *World) visionOf(u *Unit) int {
 		return int(d.Vision)
 	}
 	return VillagerVision
+}
+
+// carryBonus returns the extra carry capacity tech grants this unit.
+func (w *World) carryBonus(u *Unit) int32 {
+	if u.Owner >= MaxPlayers {
+		return 0
+	}
+	d := w.udefs.Get(u.DefID)
+	if d == nil {
+		return 0
+	}
+	return w.players[u.Owner].Mods.Carry[d.Class]
 }
 
 // startBuildingOffsets are candidate storehouse footprints (top-left tile,
@@ -421,6 +438,9 @@ func (w *World) applyBuild(player uint8, p []byte) bool {
 	if u == nil || u.Owner != player {
 		return true
 	}
+	if int32(w.players[u.Owner].Era) < def.MinEra {
+		return true
+	}
 	if !w.footprintFree(tx, ty, def.Size) {
 		return true
 	}
@@ -483,6 +503,9 @@ func (w *World) applyTrain(player uint8, p []byte) bool {
 	if udef == nil || udef.TrainBy != b.DefID {
 		return true
 	}
+	if int32(w.players[player].Era) < udef.MinEra {
+		return true
+	}
 	b.TrainQueue[b.TrainReq] = defID
 	b.TrainReq++
 	return true
@@ -514,13 +537,14 @@ func (w *World) updateUnits() {
 				if u.Carried == 0 {
 					u.CarriedK = n.Kind
 				}
-				room := resource.CarryCapacity - u.Carried
+				carryCap := resource.CarryCapacity + w.carryBonus(u)
+				room := carryCap - u.Carried
 				amt := min32(resource.GatherRate, n.Amount, room)
 				if amt > 0 {
 					n.Amount -= amt
 					u.Carried += amt
 				}
-				if u.Carried >= resource.CarryCapacity {
+				if u.Carried >= carryCap {
 					u.State = UnitReturn
 				}
 			} else {

@@ -66,8 +66,8 @@ type Node struct {
 // Animal is a wild unit spawn point; Def is the data/units.json unit id
 // (deer, boar). Animals are created as entities by the world, not the map.
 type Animal struct {
-	X, Y  int32
-	Def   uint16
+	X, Y int32
+	Def  uint16
 }
 
 // Animal unit def ids mirrored from data/units.json.
@@ -76,12 +76,16 @@ const (
 	DefBoar uint16 = 6
 )
 
+// RelicCount is the number of victory relics placed near the map center.
+const RelicCount = 5
+
 // Map is a generated world map.
 type Map struct {
 	grid    *terrain.Grid
 	spawns  [][2]int
 	nodes   []Node
 	animals []Animal
+	relics  [RelicCount][2]int32
 	digest  uint64
 }
 
@@ -98,6 +102,9 @@ func (m *Map) Nodes() []Node { return m.nodes }
 // Animals returns the wild animal spawn points in deterministic order.
 func (m *Map) Animals() []Animal { return m.animals }
 
+// Relics returns the relic tile positions in deterministic order.
+func (m *Map) Relics() [RelicCount][2]int32 { return m.relics }
+
 // Hash returns the canonical map digest.
 func (m *Map) Hash() uint64 { return m.digest }
 
@@ -110,6 +117,21 @@ func Custom(grid *terrain.Grid, spawns [][2]int, nodes []Node) *Map {
 // CustomWithAnimals is Custom with explicit wild animal spawn points.
 func CustomWithAnimals(grid *terrain.Grid, spawns [][2]int, nodes []Node, animals []Animal) *Map {
 	m := &Map{grid: grid, spawns: spawns, nodes: nodes, animals: animals}
+	m.relics = placeRelics(grid)
+	m.digest = hashMap(m)
+	return m
+}
+
+// CustomWithRelics is CustomWithAnimals with explicit relic tiles.
+func CustomWithRelics(grid *terrain.Grid, spawns [][2]int, nodes []Node, animals []Animal, relics [][2]int32) *Map {
+	m := &Map{grid: grid, spawns: spawns, nodes: nodes, animals: animals}
+	m.relics = placeRelics(grid)
+	for i, r := range relics {
+		if i >= RelicCount {
+			break
+		}
+		m.relics[i] = r
+	}
 	m.digest = hashMap(m)
 	return m
 }
@@ -146,8 +168,45 @@ func Generate(seed uint64, size, players int) (*Map, error) {
 	animals := placeAnimals(g, spawns)
 
 	m := &Map{grid: g, spawns: spawns, nodes: nodes, animals: animals}
+	m.relics = placeRelics(g)
 	m.digest = hashMap(m)
 	return m, nil
+}
+
+// placeRelics puts the five victory relics in a diamond around the map
+// center, each snapped to the nearest walkable open ground.
+func placeRelics(g *terrain.Grid) [RelicCount][2]int32 {
+	size := g.Size()
+	cx, cy := size/2, size/2
+	seeds := [RelicCount][2]int32{{0, 0}, {4, 0}, {-4, 0}, {0, 4}, {0, -4}}
+	var out [RelicCount][2]int32
+	for i, s := range seeds {
+		x, y := snapWalkable(g, int(s[0])+cx, int(s[1])+cy)
+		out[i] = [2]int32{int32(x), int32(y)}
+	}
+	return out
+}
+
+// snapWalkable returns the nearest tile to (x, y) that units can walk
+// on, scanning rings in a fixed order so every seed snaps identically.
+func snapWalkable(g *terrain.Grid, x, y int) (int, int) {
+	if g.InBounds(x, y) && g.Tile(x, y).Walkable() {
+		return x, y
+	}
+	for r := 1; r < g.Size(); r++ {
+		for dy := -r; dy <= r; dy++ {
+			for dx := -r; dx <= r; dx++ {
+				if dx != -r && dx != r && dy != -r && dy != r {
+					continue
+				}
+				nx, ny := x+dx, y+dy
+				if g.InBounds(nx, ny) && g.Tile(nx, ny).Walkable() {
+					return nx, ny
+				}
+			}
+		}
+	}
+	return x, y
 }
 
 // mix64 is the splitmix64 finalizer, the integer hash under all noise.

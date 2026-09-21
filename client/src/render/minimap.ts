@@ -50,7 +50,12 @@ export class Minimap {
     if (x >= 0 && y >= 0 && x < this.size && y < this.size) this.onPick(x, y);
   }
 
-  draw(fog: FogView | null, units: MinimapEntity[], camera: { x: number; z: number; view: number }): void {
+  draw(
+    fog: FogView | null,
+    units: MinimapEntity[],
+    camera: { x: number; z: number; view: number },
+    relics: { x: number; y: number; owner: number }[] = [],
+  ): void {
     const { ctx } = this;
     const s = this.size;
     ctx.imageSmoothingEnabled = false;
@@ -78,6 +83,15 @@ export class Minimap {
     for (const u of units) {
       ctx.fillStyle = u.owner === 0 ? '#ffffff' : u.owner >= 8 ? '#9aa0a8' : '#d94f4f';
       ctx.fillRect(u.x * k - 1, u.y * k - 1, 2.5, 2.5);
+    }
+    for (const r of relics) {
+      if (fog && fog.at(r.x, r.y) === FogUnexplored) continue;
+      ctx.fillStyle = '#e8c34a';
+      ctx.fillRect(r.x * k - 2, r.y * k - 2, 4, 4);
+      if (r.owner !== 255) {
+        ctx.fillStyle = r.owner === 0 ? '#ffffff' : '#d94f4f';
+        ctx.fillRect(r.x * k - 1, r.y * k - 1, 2, 2);
+      }
     }
     ctx.strokeStyle = 'rgba(255,255,255,0.85)';
     ctx.lineWidth = 1;

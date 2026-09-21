@@ -37,10 +37,10 @@ func TestAttackDamageFormula(t *testing.T) {
 		return w.units.Get(id)
 	}
 	cases := []struct {
-		name   string
-		att    *units.Def
-		defID  uint16
-		want   int32
+		name  string
+		att   *units.Def
+		defID uint16
+		want  int32
 	}{
 		{"lancer vs scout", lancer, DefScout, 7 + 10 - 1},
 		{"archer vs lancer", archer, DefLancer, 5 + 10 - 1},
@@ -49,7 +49,7 @@ func TestAttackDamageFormula(t *testing.T) {
 		{"villager vs boar (armor floor)", villager, DefBoar, 1},
 	}
 	for _, c := range cases {
-		if got := w.attackDamage(c.att, target(c.defID)); got != c.want {
+		if got := w.attackDamage(c.att, 0, target(c.defID)); got != c.want {
 			t.Errorf("%s: got %d want %d", c.name, got, c.want)
 		}
 	}

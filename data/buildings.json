@@ -10,7 +10,8 @@
       "size": 2,
       "dropoff": false,
       "trainFood": 0,
-      "trainTicks": 0
+      "trainTicks": 0,
+      "minEra": 0
     },
     {
       "id": 2,
@@ -22,7 +23,8 @@
       "size": 1,
       "dropoff": false,
       "trainFood": 0,
-      "trainTicks": 0
+      "trainTicks": 0,
+      "minEra": 0
     },
     {
       "id": 3,
@@ -34,7 +36,8 @@
       "size": 2,
       "dropoff": true,
       "trainFood": 50,
-      "trainTicks": 20
+      "trainTicks": 20,
+      "minEra": 0
     },
     {
       "id": 4,
@@ -46,7 +49,60 @@
       "size": 2,
       "dropoff": false,
       "trainFood": 0,
-      "trainTicks": 0
+      "trainTicks": 0,
+      "minEra": 1
+    },
+    {
+      "id": 5,
+      "key": "market",
+      "costWood": 125,
+      "costStone": 0,
+      "buildTicks": 90,
+      "popRoom": 0,
+      "size": 2,
+      "dropoff": true,
+      "trainFood": 0,
+      "trainTicks": 0,
+      "minEra": 1
+    },
+    {
+      "id": 6,
+      "key": "forge",
+      "costWood": 150,
+      "costStone": 50,
+      "buildTicks": 100,
+      "popRoom": 0,
+      "size": 2,
+      "dropoff": false,
+      "trainFood": 0,
+      "trainTicks": 0,
+      "minEra": 2
+    },
+    {
+      "id": 7,
+      "key": "bank",
+      "costWood": 175,
+      "costStone": 75,
+      "buildTicks": 110,
+      "popRoom": 0,
+      "size": 2,
+      "dropoff": true,
+      "trainFood": 0,
+      "trainTicks": 0,
+      "minEra": 3
+    },
+    {
+      "id": 8,
+      "key": "wonder",
+      "costWood": 800,
+      "costStone": 500,
+      "buildTicks": 3000,
+      "popRoom": 10,
+      "size": 3,
+      "dropoff": false,
+      "trainFood": 0,
+      "trainTicks": 0,
+      "minEra": 4
     }
   ]
 }

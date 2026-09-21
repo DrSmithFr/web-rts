@@ -11,6 +11,8 @@ export const OrderKind = {
   MoveGroup: 6,
   Attack: 7,
   Patrol: 8,
+  AgeUp: 9,
+  Research: 10,
 } as const;
 
 export interface MoveItem {
@@ -97,6 +99,18 @@ export function patrolPayload(ids: number[], x16: number, y16: number): Uint8Arr
   for (const id of ids) w.uvarint(id);
   w.u16(x16);
   w.u16(y16);
+  return w.out();
+}
+
+export function eraPayload(era: number): Uint8Array {
+  const w = new Writer();
+  w.uvarint(era);
+  return w.out();
+}
+
+export function researchPayload(tech: number): Uint8Array {
+  const w = new Writer();
+  w.uvarint(tech);
   return w.out();
 }
 

@@ -5,6 +5,46 @@ merges (`vNN-phase-name`).
 
 ## Unreleased
 
+## [v06-eras-tech-victory] - 2026-09-21
+
+Phase 6: the five-era ladder with age-up, prerequisite technology trees,
+map relics and the three victory conditions.
+
+### Added
+
+- `sim/era` + `data/eras.json`: Prehistory .. Modern ladder with age-up
+  costs, prerequisite buildings and research time; validation tests.
+- `sim/tech` + `data/techs.json`: 15 technologies with era gates,
+  research buildings, prerequisite chains and flat integer stat effects
+  (damage, armor, speed, carry, range) folded into per-player modifier
+  sets; validation and mod tests.
+- Core: age-up and research orders (`AgeUp` 9, `Research` 10 with pinned
+  wire vectors), per-player era/tech state in the world hash
+  (`rts.world/v6`), era gates on building and training, five map relics
+  claimed by standing on them (`rts.map/v4`), conquest / Wonder / relic
+  victory resolution with a first-settled winner; 8 new core tests.
+- Data: Market, Forge, Bank and Wonder buildings; Knight and Crossbowman
+  units (Medieval); Antiquity gates on the military trio; era costs
+  rebalanced to the real gather economy (food front-loaded, gold scaling).
+- `wasm`: 40-byte economy records (era, age progress, current research),
+  `eras`, `techDefs`, `playerTechs`, `victory`, `relicsBlob` exports.
+- `client`: era + relic counters in the resource bar, age-up button with
+  cost/requirement states and aging progress, per-building research
+  buttons with prerequisite and affordability gating, research progress
+  line, golden relic markers on the minimap, victory banner; i18n keys
+  for eras, techs and victory.
+- `detcheck`: staged recorder (goals fire off live probe state, replay
+  stays reproducible); new `eras` scenario covering age-up, market,
+  lumber, a two-tech prerequisite chain and lancer training.
+
+### Changed
+
+- Replays regenerated for `rts.world/v6`; new `phase6_eras.rts`
+  (12 000 ticks) recorded, verified and parity-checked;
+  `make test-det`/`test-parity` now gate five replays.
+- Building defs carry `minEra`; the build menu hides buildings above the
+  player's era.
+
 ## [v05-combat-hunting-control-groups] - 2026-09-21
 
 Phase 5: the combat triangle, huntable wildlife, attack/patrol orders,

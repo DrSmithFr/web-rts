@@ -104,7 +104,7 @@ func (w *World) wanderStep(id entity.ID, u *Unit) {
 	if u.TX == 0 && u.TY == 0 {
 		u.TX, u.TY = u.X, u.Y // fresh spawn: no destination yet
 	}
-	if (uint32(id) + uint32(w.tick)*7) % 40 == 0 {
+	if (uint32(id)+uint32(w.tick)*7)%40 == 0 {
 		h := mix64(uint64(w.seed) ^ uint64(id)*0x9e3779b97f4a7c15 ^ uint64(w.tick)*0xff51afd7ed558ccd)
 		tx := tileOf(u.X) + int32(h%7) - 3
 		ty := tileOf(u.Y) + int32((h>>3)%7) - 3
@@ -158,8 +158,8 @@ func (w *World) nearestThreat(u *Unit, radius int32) *Unit {
 }
 
 // attackDamage is the canonical strike formula:
-// max(1, damage + class bonus - armor of the matching type).
-func (w *World) attackDamage(att *units.Def, target *Unit) int32 {
+// max(1, damage + tech bonus + class bonus - (armor + tech armor)).
+func (w *World) attackDamage(att *units.Def, attOwner uint8, target *Unit) int32 {
 	tdef := w.udefs.Get(target.DefID)
 	armor := int32(0)
 	tclass := uint8(0)
@@ -172,7 +172,18 @@ func (w *World) attackDamage(att *units.Def, target *Unit) int32 {
 			armor = tdef.ArmorCrush
 		}
 	}
+	if target.Owner < MaxPlayers {
+		switch att.DamageType {
+		case units.TypePierce:
+			armor += w.players[target.Owner].Mods.ArmorP[tclass]
+		case units.TypeCrush:
+			armor += w.players[target.Owner].Mods.ArmorC[tclass]
+		}
+	}
 	dmg := att.Damage + w.udefs.BonusFor(att, tclass) - armor
+	if attOwner < MaxPlayers {
+		dmg += w.players[attOwner].Mods.Dmg[att.Class]
+	}
 	if dmg < 1 {
 		dmg = 1
 	}
@@ -205,11 +216,15 @@ func (w *World) combatPhase() {
 			u.AttackTarget = entity.Nil
 			return
 		}
-		if near(u.X, u.Y, t.X, t.Y, fixed.F16(def.Range16)) {
+		reach := fixed.F16(def.Range16)
+		if u.Owner < MaxPlayers {
+			reach += fixed.F16(w.players[u.Owner].Mods.Range16[def.Class])
+		}
+		if near(u.X, u.Y, t.X, t.Y, reach) {
 			if u.Cooldown > 0 {
 				return
 			}
-			t.HP -= w.attackDamage(def, t)
+			t.HP -= w.attackDamage(def, u.Owner, t)
 			u.Cooldown = def.Rate
 			if t.HP <= 0 {
 				markDead(u.AttackTarget)

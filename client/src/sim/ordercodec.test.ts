@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   attackPayload,
+  eraPayload,
+  researchPayload,
   buildPayload,
   gatherPayload,
   moveGroupPayload,
@@ -70,6 +72,10 @@ function encode(kind: string, args: string): Uint8Array {
       const [x, y] = xy.split(',');
       return patrolPayload(idsPart.split(';').map(Number), Number(x), Number(y));
     }
+    case 'era':
+      return eraPayload(Number(args));
+    case 'research':
+      return researchPayload(Number(args));
     case 'move-group': {
       const [idsPart, xy] = args.split(':');
       const [x, y] = xy.split(',');
