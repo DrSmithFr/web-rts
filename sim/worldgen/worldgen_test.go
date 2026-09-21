@@ -191,3 +191,31 @@ func dist2(x1, y1, x2, y2 int) int {
 	dx, dy := x1-x2, y1-y2
 	return dx*dx + dy*dy
 }
+
+// TestLargeMapGeneration pins the spec's 1000x1000 requirement: it must
+// generate deterministically and stay well under a second.
+func TestLargeMapGeneration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("large map skipped in -short mode")
+	}
+	m1, err := Generate(0x5eed, 1000, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m1.Grid().Size() != 1000 {
+		t.Fatalf("size %d", m1.Grid().Size())
+	}
+	if len(m1.Spawns()) != 8 {
+		t.Fatalf("spawns %d", len(m1.Spawns()))
+	}
+	m2, err := Generate(0x5eed, 1000, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m1.Hash() != m2.Hash() {
+		t.Fatal("large map generation is not deterministic")
+	}
+	if len(m1.Nodes()) < 100000 {
+		t.Fatalf("suspiciously few nodes on a large map: %d", len(m1.Nodes()))
+	}
+}
