@@ -16,12 +16,33 @@ export const PALETTE = {
   marker: 0xe8c14a,
   select: 0xffffff,
 
+  gold: 0xf1c40f,
+  berry: 0xc0396b,
+  hut: 0xa9773f,
+  campfire: 0xd35400,
+  storehouse: 0x8e6b3f,
+
   player0: 0xd94f4f,
   player1: 0x4f7fd9,
   player2: 0xd9a54f,
   player3: 0x9a4fd9,
   player4: 0x4fd9a5,
+  player5: 0xd94fb2,
+  player6: 0x4fd9d9,
+  player7: 0xb8d94f,
 } as const;
+
+// Player body colors, indexed by owner id.
+export const PLAYER_COLORS: number[] = [
+  PALETTE.player0,
+  PALETTE.player1,
+  PALETTE.player2,
+  PALETTE.player3,
+  PALETTE.player4,
+  PALETTE.player5,
+  PALETTE.player6,
+  PALETTE.player7,
+];
 
 export const TERRAIN_COLORS: number[] = [
   PALETTE.grass,

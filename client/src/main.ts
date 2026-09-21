@@ -1,15 +1,28 @@
 import * as THREE from 'three';
 
-import { SimWorld, seedFromLocation } from './sim/bridge';
+import { SimWorld, seedFromLocation, type BuildingDef, type BuildingRec, type NodeRec, type UnitRec } from './sim/bridge';
 import { loadSim } from './sim/loader';
+import { OrderKind, buildPayload, gatherPayload, movePayload, trainPayload } from './sim/ordercodec';
 import { FixedStepLoop } from './engine/loop';
 import { Selection, normalizeRect, selectInRect, type ScreenPoint } from './engine/selection';
 import { createScene } from './render/scene';
 import { buildTerrainMesh } from './render/terrainMesh';
 import { buildMapObjects } from './render/objects';
+import { buildNodeObjects } from './render/nodes';
+import { buildActors } from './render/actors';
 import { RtsCamera } from './render/camera';
+import { HEIGHT_SCALE, PALETTE } from './render/palette';
 import { terrainName } from './render/terrainLabels';
-import { t } from './i18n';
+import { t, tn } from './i18n';
+
+const LOCAL_PLAYER = 0;
+const KIND_NAMES: Record<number, string> = {
+  1: 'node.wood',
+  2: 'node.stone',
+  3: 'node.food',
+  4: 'node.gold',
+  5: 'node.oil',
+};
 
 const statusEl = document.querySelector<HTMLDivElement>('#status')!;
 const statsEl = document.querySelector<HTMLDivElement>('#stats')!;
@@ -20,6 +33,15 @@ const fpsEl = document.querySelector<HTMLSpanElement>('#fps')!;
 const selectedEl = document.querySelector<HTMLSpanElement>('#selected')!;
 const hoverEl = document.querySelector<HTMLDivElement>('#hover')!;
 const selRectEl = document.querySelector<HTMLDivElement>('#selrect')!;
+const resbarEl = document.querySelector<HTMLDivElement>('#resbar')!;
+const panelEl = document.querySelector<HTMLDivElement>('#panel')!;
+const resEls = {
+  wood: document.querySelector<HTMLSpanElement>('#res-wood')!,
+  stone: document.querySelector<HTMLSpanElement>('#res-stone')!,
+  food: document.querySelector<HTMLSpanElement>('#res-food')!,
+  gold: document.querySelector<HTMLSpanElement>('#res-gold')!,
+  pop: document.querySelector<HTMLSpanElement>('#res-pop')!,
+};
 const canvas = document.querySelector<HTMLCanvasElement>('#gl')!;
 
 statusEl.textContent = t('hud.status.loading');
@@ -30,6 +52,7 @@ try {
   const world = SimWorld.create(sim, seed);
   statusEl.hidden = true;
   statsEl.hidden = false;
+  resbarEl.style.display = 'flex';
   console.info(t('hud.status.ready', { version: sim.version(), seed: world.seed() }));
 
   const size = world.mapSize();
@@ -39,25 +62,51 @@ try {
 
   const { renderer, scene, camera } = createScene(canvas, size);
   scene.add(buildTerrainMesh(size, tiles, heights));
-  const objects = buildMapObjects(size, tiles, heights, world.spawns(), seed ^ 0xa17c);
-  scene.add(objects.group);
-  const rtsCam = new RtsCamera(camera, size);
+  scene.add(buildMapObjects(size, heights, world.spawns()).group);
 
+  let nodes = world.nodes();
+  const nodesObj = buildNodeObjects(nodes, size, heights);
+  scene.add(nodesObj.group);
+  const actors = buildActors(size, heights);
+  scene.add(actors.group);
+
+  const defs = world.defs();
+  const defById = new Map<number, BuildingDef>(defs.map((d) => [d.id, d]));
+  const nodeByTile = new Map<number, NodeRec>();
+  const refreshNodeIndex = (): void => {
+    nodeByTile.clear();
+    for (const n of nodes) nodeByTile.set(n.tileY * size + n.tileX, n);
+  };
+  refreshNodeIndex();
+
+  const rtsCam = new RtsCamera(camera, size);
   mapEl.textContent = `${size}² ${world.mapHashHex().slice(0, 8)}`;
 
-  // --- selection -------------------------------------------------------
+  let units: UnitRec[] = [];
+  let buildings: BuildingRec[] = [];
   const selection = new Selection();
-  const byTile = new Map<number, number>();
-  for (const f of objects.features) byTile.set(f.id, f.id);
+  let placing: BuildingDef | null = null;
+  let affordable = false;
 
-  function applySelection(): void {
-    objects.setSelection(selection.toArray());
-    selectedEl.textContent = String(selection.size);
-  }
+  const groundY = (tx: number, ty: number): number =>
+    heights[ty * (size + 1) + tx] * HEIGHT_SCALE;
+
+  // placement ghost -------------------------------------------------------
+  const ghostGeo = new THREE.BoxGeometry(1, 1, 1);
+  ghostGeo.translate(0.5, 0, 0.5);
+  const ghostMat = new THREE.MeshBasicMaterial({
+    color: PALETTE.leaf,
+    transparent: true,
+    opacity: 0.45,
+  });
+  const ghost = new THREE.Mesh(ghostGeo, ghostMat);
+  ghost.visible = false;
+  scene.add(ghost);
 
   // --- picking ----------------------------------------------------------
   const raycaster = new THREE.Raycaster();
   const groundMesh = scene.children.find((c) => c instanceof THREE.Mesh)!;
+  const proj = new THREE.Vector3();
 
   function tileAt(clientX: number, clientY: number): number | null {
     const ndc = new THREE.Vector2(
@@ -73,22 +122,199 @@ try {
     return ty * size + tx;
   }
 
-  function featureScreenPoints(): ScreenPoint[] {
-    const v = new THREE.Vector3();
-    return objects.features.map((f) => {
-      v.copy(f.position).project(camera);
-      return {
-        id: f.id,
-        sx: (v.x * 0.5 + 0.5) * window.innerWidth,
-        sy: (-v.y * 0.5 + 0.5) * window.innerHeight,
-        onScreen: v.z >= -1 && v.z <= 1,
-      };
-    });
+  function screenPos(world: THREE.Vector3): { sx: number; sy: number; onScreen: boolean } {
+    proj.copy(world).project(camera);
+    return {
+      sx: (proj.x * 0.5 + 0.5) * window.innerWidth,
+      sy: (-proj.y * 0.5 + 0.5) * window.innerHeight,
+      onScreen: proj.z >= -1 && proj.z <= 1,
+    };
   }
 
-  // --- pointer input ----------------------------------------------------
+  function unitScreenPoints(): ScreenPoint[] {
+    return units
+      .filter((u) => u.owner === LOCAL_PLAYER)
+      .map((u) => {
+        const p = screenPos(
+          new THREE.Vector3(u.x, groundY(Math.floor(u.x), Math.floor(u.y)), u.y),
+        );
+        return { id: u.id, ...p };
+      });
+  }
+
+  function nearestUnit(clientX: number, clientY: number, radius: number): number | null {
+    let best: number | null = null;
+    let bestD2 = radius * radius;
+    for (const u of unitScreenPoints()) {
+      if (!u.onScreen) continue;
+      const d2 = (u.sx - clientX) ** 2 + (u.sy - clientY) ** 2;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = u.id;
+      }
+    }
+    return best;
+  }
+
+  function nearestBuilding(clientX: number, clientY: number, radius: number): number | null {
+    let best: number | null = null;
+    let bestD2 = radius * radius;
+    for (const b of buildings) {
+      const def = defById.get(b.def);
+      const half = ((def ? def.size : 1) - 1) / 2;
+      const p = screenPos(
+        new THREE.Vector3(
+          b.tileX + 0.5 + half,
+          groundY(b.tileX, b.tileY) + 0.5,
+          b.tileY + 0.5 + half,
+        ),
+      );
+      if (!p.onScreen) continue;
+      const d2 = (p.sx - clientX) ** 2 + (p.sy - clientY) ** 2;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = b.id;
+      }
+    }
+    return best;
+  }
+
+  function selectedVillagers(): number[] {
+    const ids = selection.toArray();
+    const owned = new Set(units.filter((u) => u.owner === LOCAL_PLAYER).map((u) => u.id));
+    return ids.filter((id) => owned.has(id));
+  }
+
+  function gatherTargetAt(tile: number): NodeRec | null {
+    const tx = tile % size;
+    const ty = Math.floor(tile / size);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const n = nodeByTile.get((ty + dy) * size + (tx + dx));
+        if (n && n.kind !== 5 && n.amount > 0) return n;
+      }
+    }
+    return null;
+  }
+
+  // --- orders -------------------------------------------------------------
+  function issueMove(tile: number): void {
+    const ids = selectedVillagers();
+    if (ids.length === 0) return;
+    const tx = tile % size;
+    const ty = Math.floor(tile / size);
+    const items = ids.map((id) => ({ id, x16: Math.min(65535, tx * 16 + 8), y16: Math.min(65535, ty * 16 + 8) }));
+    world.order(LOCAL_PLAYER, OrderKind.Move, movePayload(items));
+  }
+
+  function issueGather(node: NodeRec): void {
+    for (const id of selectedVillagers()) {
+      world.order(LOCAL_PLAYER, OrderKind.Gather, gatherPayload(id, node.id));
+    }
+  }
+
+  function issueBuild(tile: number): void {
+    if (!placing) return;
+    const ids = selectedVillagers();
+    if (ids.length === 0) return;
+    const tx = tile % size;
+    const ty = Math.floor(tile / size);
+    world.order(LOCAL_PLAYER, OrderKind.Build, buildPayload(ids[0], placing.id, tx, ty));
+    setPlacing(null);
+  }
+
+  function issueTrain(buildingId: number): void {
+    world.order(LOCAL_PLAYER, OrderKind.Train, trainPayload(buildingId));
+  }
+
+  // --- panel --------------------------------------------------------------
+  function costLabel(def: BuildingDef): string {
+    const parts: string[] = [];
+    if (def.costWood > 0) parts.push(`${def.costWood}w`);
+    if (def.costStone > 0) parts.push(`${def.costStone}s`);
+    return parts.join(' ');
+  }
+
+  function canAfford(def: BuildingDef): boolean {
+    const p = economy[LOCAL_PLAYER];
+    return p !== undefined && p.res[1] >= def.costWood && p.res[2] >= def.costStone;
+  }
+
+  function renderPanel(): void {
+    const villagers = selectedVillagers().length;
+    const selBuildings = selection
+      .toArray()
+      .map((id) => buildings.find((b) => b.id === id))
+      .filter((b): b is BuildingRec => b !== undefined && b.owner === LOCAL_PLAYER);
+
+    if (villagers === 0 && selBuildings.length === 0) {
+      panelEl.style.display = 'none';
+      return;
+    }
+    panelEl.style.display = 'block';
+    panelEl.textContent = '';
+
+    if (villagers > 0) {
+      const title = document.createElement('div');
+      title.textContent = t('panel.villagers', { count: villagers });
+      panelEl.appendChild(title);
+
+      const row = document.createElement('div');
+      row.className = 'row';
+      for (const def of defs) {
+        const btn = document.createElement('button');
+        btn.textContent = `${tn(`building.${def.key}`)} · ${costLabel(def)}`;
+        btn.disabled = !canAfford(def);
+        btn.onclick = () => setPlacing(def);
+        row.appendChild(btn);
+      }
+      const hint = document.createElement('div');
+      hint.className = 'dim';
+      hint.dataset.hint = '1';
+      panelEl.appendChild(row);
+      panelEl.appendChild(hint);
+    }
+
+    for (const b of selBuildings) {
+      const def = defById.get(b.def);
+      const line = document.createElement('div');
+      if (!def) continue;
+      if (b.progress > 0) {
+        const pct = Math.round(100 * (1 - b.progress / def.buildTicks));
+        line.textContent = `${tn(`building.${def.key}`)} · ${t('panel.progress', { pct })}`;
+      } else {
+        let text = tn(`building.${def.key}`);
+        if (def.trainTicks > 0) {
+          const queued = b.trainLeft > 0 ? b.trainReq + 1 : b.trainReq;
+          text += ` · ${t('panel.training')} ${queued}`;
+        }
+        line.textContent = text;
+      }
+      panelEl.appendChild(line);
+      if (def.trainTicks > 0 && b.progress === 0) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const btn = document.createElement('button');
+        btn.textContent = `${t('panel.train')} · ${def.trainFood}f`;
+        btn.onclick = () => issueTrain(b.id);
+        row.appendChild(btn);
+        panelEl.appendChild(row);
+      }
+    }
+  }
+
+  function setPlacing(def: BuildingDef | null): void {
+    placing = def;
+    ghost.visible = def !== null;
+    for (const el of panelEl.querySelectorAll('[data-hint]')) {
+      el.textContent = def ? t('panel.place') : '';
+    }
+  }
+
+  // --- pointer input --------------------------------------------------------
   let leftStart: { x: number; y: number } | null = null;
   let rightStart: { x: number; yaw: number } | null = null;
+  let lastTile: number | null = null;
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -124,39 +350,87 @@ try {
 
   window.addEventListener('pointerup', (e) => {
     if (e.button === 2) {
-      rightStart = null;
+      if (rightStart) {
+        rightStart = null;
+      }
       return;
     }
     if (e.button !== 0 || !leftStart) return;
     const dragged =
       Math.abs(e.clientX - leftStart.x) > 4 || Math.abs(e.clientY - leftStart.y) > 4;
     selRectEl.style.display = 'none';
+    const tile = tileAt(e.clientX, e.clientY);
+
+    if (placing) {
+      if (tile !== null) issueBuild(tile);
+      leftStart = null;
+      return;
+    }
 
     if (dragged) {
       const rect = normalizeRect(leftStart.x, leftStart.y, e.clientX, e.clientY);
-      selection.replace(selectInRect(featureScreenPoints(), rect));
+      selection.replace(selectInRect(unitScreenPoints(), rect));
     } else {
-      const tile = tileAt(e.clientX, e.clientY);
-      if (tile !== null && byTile.has(tile)) {
-        selection.replace([tile]);
+      const unit = nearestUnit(e.clientX, e.clientY, 18);
+      if (unit !== null) {
+        selection.replace([unit]);
       } else {
-        selection.clear();
+        const b = nearestBuilding(e.clientX, e.clientY, 26);
+        if (b !== null) {
+          selection.replace([b]);
+        } else {
+          selection.clear();
+        }
       }
     }
     applySelection();
     leftStart = null;
   });
 
+  window.addEventListener('pointerup', (e) => {
+    if (e.button !== 2) return;
+    if (placing) {
+      setPlacing(null);
+      return;
+    }
+    const tile = tileAt(e.clientX, e.clientY);
+    if (tile === null) return;
+    const node = gatherTargetAt(tile);
+    if (node) {
+      issueGather(node);
+    } else {
+      issueMove(tile);
+    }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Escape') setPlacing(null);
+  });
+
+  function applySelection(): void {
+    actors.setSelection(selection.toArray());
+    selectedEl.textContent = String(selection.size);
+    renderPanel();
+  }
+
   function updateHover(clientX: number, clientY: number): void {
     const tile = tileAt(clientX, clientY);
+    lastTile = tile;
     if (tile === null) {
       hoverEl.style.visibility = 'hidden';
       return;
     }
-    const tx = tile % size;
-    const ty = Math.floor(tile / size);
-    const h = heights[ty * (size + 1) + tx];
-    hoverEl.textContent = `${terrainName(tiles[tile])} · ${t('hud.height')} ${h}`;
+    const node = nodeByTile.get(tile);
+    if (node) {
+      hoverEl.textContent =
+        node.amount > 0
+          ? `${tn(KIND_NAMES[node.kind])} · ${node.amount}`
+          : t('node.depleted');
+    } else {
+      const tx = tile % size;
+      const ty = Math.floor(tile / size);
+      hoverEl.textContent = `${terrainName(tiles[tile])} · ${t('hud.height')} ${heights[ty * (size + 1) + tx]}`;
+    }
     hoverEl.style.visibility = 'visible';
   }
 
@@ -199,6 +473,19 @@ try {
     if (dx !== 0 || dz !== 0) rtsCam.pan(dx, dz);
   }
 
+  // --- HUD ----------------------------------------------------------------
+  let economy = world.economy();
+
+  function renderHud(): void {
+    const p = economy[LOCAL_PLAYER];
+    if (!p) return;
+    resEls.wood.textContent = String(p.res[1]);
+    resEls.stone.textContent = String(p.res[2]);
+    resEls.food.textContent = String(p.res[3]);
+    resEls.gold.textContent = String(p.res[4]);
+    resEls.pop.textContent = `${p.pop}/${p.popCap}`;
+  }
+
   // --- main loop ----------------------------------------------------------
   let smoothedMs = 16;
   let frameStart = performance.now();
@@ -211,11 +498,35 @@ try {
       smoothedMs = smoothedMs * 0.9 + (now - frameStart) * 0.1;
       frameStart = now;
 
+      units = world.units();
+      buildings = world.buildings();
+      actors.setUnits(units);
+      actors.setBuildings(buildings, defById);
+
+      const tick = world.tick();
+      if (tick % 10 === 0) {
+        nodes = world.nodes();
+        nodesObj.update(nodes);
+        refreshNodeIndex();
+        economy = world.economy();
+        renderHud();
+        renderPanel();
+      }
+
+      if (placing && lastTile !== null) {
+        const tx = lastTile % size;
+        const ty = Math.floor(lastTile / size);
+        affordable = canAfford(placing);
+        ghost.visible = true;
+        ghost.position.set(tx, groundY(tx, ty) + 0.05, ty);
+        ghost.scale.set(placing.size, 1, placing.size);
+        ghostMat.color.setHex(affordable ? PALETTE.leaf : 0xd94f4f);
+      }
+
       driveCamera();
       rtsCam.update();
       renderer.render(scene, camera);
 
-      const tick = world.tick();
       tickEl.textContent = String(tick);
       hashEl.textContent = world.hashHex();
       fpsEl.textContent = String(Math.round(1000 / smoothedMs));
