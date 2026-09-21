@@ -5,6 +5,46 @@ merges (`vNN-phase-name`).
 
 ## Unreleased
 
+## [v03-villagers-resources-construction] - 2026-09-21
+
+Phase 3: villagers harvest five resources, build the first buildings and
+train new villagers — the economy loop is playable end to end.
+
+### Added
+
+- `sim/entity`: generic slot store with generation-carrying ids
+  (`gen<<16|slot`), free-list reuse and slot-ordered iteration.
+- `sim/building` + `data/buildings.json`: validated balance table
+  (hut, campfire, storehouse) embedded at the module root; all
+  gameplay numbers live in data, parsed once, never on the hot path.
+- `sim/resource`: the five resources; worldgen now places harvestable
+  nodes (tree per forest tile, stone deposit per rock tile, sparse gold
+  and oil, four guaranteed berry bushes per spawn via a deterministic
+  offset ladder) and folds them into the map digest (`rts.map/v2`).
+- `sim/orders`: binary payloads for move/gather/build/stop/train,
+  byte-for-byte pinned by `testdata/order_vectors.txt` and mirrored in
+  `client/src/sim/ordercodec.ts` against the same file.
+- `sim/core`: economy simulation — starting resources (100w/50s/200f/50g),
+  three villagers plus a storehouse per spawn, villager state machine
+  (idle/move/gather/return/build), carry-10 trips to the nearest dropoff,
+  construction sites built by escorted villagers, population cap
+  (5 + hut rooms) and storehouse villager training (50 food, 20 ticks).
+  Full state hashed (`rts.world/v3`); fixed 16.16 movement is direct-line
+  (pathfinding lands in phase 4).
+- Bridge: `unitsBlob/nodesBlob/buildingsBlob/economyBlob/defs` compact
+  little-endian records; typed decoding in `SimWorld`.
+- `client`: villagers rendered owner-colored and instanced; nodes shrink
+  visually as they deplete; buildings grow with build progress. Top
+  resource bar (wood/stone/food/gold/pop), selection panel with build
+  buttons and placement ghost (esc cancels), right-click moves or
+  gathers, training from the storehouse panel.
+
+### Changed
+
+- Deterministic replays: `tools/detcheck -scenario economy` records a
+  scripted gather/build/train run (`tools/replays/phase3_economy.rts`);
+  both replays are gated by `make test-det` and native↔wasm parity.
+
 ## [v02-map-camera-selection] - 2026-09-21
 
 Phase 2: procedural map, Three.js low-poly rendering, RTS camera and
