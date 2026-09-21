@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import type { BuildingDef, BuildingRec } from '../sim/bridge';
 
 // RenderUnit is a display-ready unit: interpolated position, ground
-// height y and a vertical bob offset for the walking animation.
+// height y, a vertical bob offset for the walking animation, the def for
+// body shape, a base color and an hp fraction used for damage tint.
 export interface RenderUnit {
   id: number;
   owner: number;
@@ -11,15 +12,27 @@ export interface RenderUnit {
   y: number;
   yOff: number;
   carried: number;
+  def: number;
+  cls: number;
+  color: number;
+  hpFrac: number;
 }
-import { PALETTE, PLAYER_COLORS } from './palette';
+import { MOUNT_COLOR, PALETTE } from './palette';
 import { heightSampler } from './height';
 
-// Dynamic entities: villagers as owner-colored instanced bodies, buildings
-// as owner-colored boxes (sites grow with progress), plus selection rings.
+// Dynamic entities: humanoids as owner-colored instanced capsules, with
+// spear tips for lancers and mounts for scouts, animals as low boxes,
+// buildings as owner-colored boxes (sites grow with progress), plus
+// selection rings.
 
 const UNIT_CAP = 512;
+const EXTRA_CAP = 128;
 const BUILDING_CAP = 256;
+
+// Unit class ids mirrored from sim/units.
+const CLASS_SCOUT = 4;
+const CLASS_ANIMAL = 5;
+const DEF_LANCER = 2;
 
 export interface Actors {
   group: THREE.Group;
@@ -65,6 +78,22 @@ export function buildActors(size: number, heights: Uint16Array): Actors {
   rings.frustumCulled = false;
   group.add(rings);
 
+  const spearGeo = new THREE.ConeGeometry(0.05, 0.55, 5);
+  spearGeo.translate(0, 0.62, 0.12);
+  const spearMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
+  const spearMesh = new THREE.InstancedMesh(spearGeo, spearMat, EXTRA_CAP);
+  spearMesh.count = 0;
+  spearMesh.frustumCulled = false;
+  group.add(spearMesh);
+
+  const beastGeo = new THREE.BoxGeometry(0.34, 0.3, 0.62);
+  beastGeo.translate(0, 0.18, 0);
+  const beastMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
+  const beastMesh = new THREE.InstancedMesh(beastGeo, beastMat, EXTRA_CAP);
+  beastMesh.count = 0;
+  beastMesh.frustumCulled = false;
+  group.add(beastMesh);
+
   const matrix = new THREE.Matrix4();
   const quat = new THREE.Quaternion();
   const scale = new THREE.Vector3();
@@ -73,24 +102,57 @@ export function buildActors(size: number, heights: Uint16Array): Actors {
   const unitPos = new Map<number, THREE.Vector3>();
   const buildPos = new Map<number, THREE.Vector3>();
 
+  const tinted = (hex: number, hpFrac: number): THREE.Color =>
+    color.clone().setHex(hex).multiplyScalar(0.45 + 0.55 * Math.min(1, Math.max(0, hpFrac)));
+
   return {
     group,
     setUnits(units: RenderUnit[]): void {
       unitPos.clear();
-      const n = Math.min(units.length, UNIT_CAP);
-      for (let i = 0; i < n; i++) {
-        const u = units[i];
+      let n = 0;
+      let ns = 0;
+      let nb = 0;
+      for (const u of units) {
+        if (n >= UNIT_CAP) break;
         const p = new THREE.Vector3(u.x, heightAt(u.x, u.y) + u.yOff, u.y);
         unitPos.set(u.id, p);
-        const s = u.carried > 0 ? 1.15 : 1;
+        if (u.cls === CLASS_ANIMAL) {
+          if (nb < EXTRA_CAP) {
+            matrix.compose(p, quat, scale.set(1, 1, 1));
+            beastMesh.setMatrixAt(nb, matrix);
+            beastMesh.setColorAt(nb, tinted(u.color, u.hpFrac));
+            nb++;
+          }
+          continue;
+        }
+        const s = u.carried > 0 ? 1.15 : u.cls === CLASS_SCOUT ? 1.12 : 1;
         matrix.compose(p, quat, scale.set(s, s, s));
-        unitMesh.setMatrixAt(i, matrix);
-        color.setHex(PLAYER_COLORS[u.owner % PLAYER_COLORS.length]);
-        unitMesh.setColorAt(i, color);
+        unitMesh.setMatrixAt(n, matrix);
+        unitMesh.setColorAt(n, tinted(u.color, u.hpFrac));
+        n++;
+        if (u.cls === CLASS_SCOUT && nb < EXTRA_CAP) {
+          const mp = new THREE.Vector3(u.x, heightAt(u.x, u.y) + u.yOff * 0.5, u.y);
+          matrix.compose(mp, quat, scale.set(1.35, 0.75, 1.6));
+          beastMesh.setMatrixAt(nb, matrix);
+          beastMesh.setColorAt(nb, tinted(MOUNT_COLOR, u.hpFrac));
+          nb++;
+        }
+        if (u.def === DEF_LANCER && ns < EXTRA_CAP) {
+          matrix.compose(p, quat, scale.set(1, 1, 1));
+          spearMesh.setMatrixAt(ns, matrix);
+          spearMesh.setColorAt(ns, color.clone().setHex(0xc9c9c9));
+          ns++;
+        }
       }
       unitMesh.count = n;
+      spearMesh.count = ns;
+      beastMesh.count = nb;
       unitMesh.instanceMatrix.needsUpdate = true;
       if (unitMesh.instanceColor) unitMesh.instanceColor.needsUpdate = true;
+      spearMesh.instanceMatrix.needsUpdate = true;
+      if (spearMesh.instanceColor) spearMesh.instanceColor.needsUpdate = true;
+      beastMesh.instanceMatrix.needsUpdate = true;
+      if (beastMesh.instanceColor) beastMesh.instanceColor.needsUpdate = true;
     },
     setBuildings(buildings: BuildingRec[], defs: Map<number, BuildingDef>): void {
       buildPos.clear();

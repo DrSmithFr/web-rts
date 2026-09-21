@@ -7,35 +7,57 @@ import (
 	"rts/sim/resource"
 )
 
-// Unit kinds; villagers are the only one until combat lands.
+// Unit kinds select the body shape on the client.
 const (
-	UnitVillager uint8 = 1
+	KindVillager uint8 = 1
+	KindMilitary uint8 = 2
+	KindAnimal   uint8 = 3
 )
 
-// Unit states (state machine: idle -> move/gather/build -> return -> ...).
+// Unit states. Workers cycle idle/move/gather/return/build; military use
+// attack and patrol; animals wander and flee.
 const (
-	UnitIdle   uint8 = 0
-	UnitMove   uint8 = 1
-	UnitGather uint8 = 2
-	UnitReturn uint8 = 3
-	UnitBuild  uint8 = 4
+	UnitIdle    uint8 = 0
+	UnitMove    uint8 = 1
+	UnitGather  uint8 = 2
+	UnitReturn  uint8 = 3
+	UnitBuild   uint8 = 4
+	UnitAttack  uint8 = 5
+	UnitPatrol  uint8 = 6
+	UnitWander  uint8 = 7
+	UnitFlee    uint8 = 8
 )
 
-// Phase-3 balance constants. Building numbers live in data/buildings.json.
+// Unit def ids fixed by data/units.json order.
 const (
-	VillagerHP int32 = 40
+	DefVillager uint16 = 1
+	DefLancer   uint16 = 2
+	DefArcher   uint16 = 3
+	DefScout    uint16 = 4
+	DefDeer     uint16 = 5
+	DefBoar     uint16 = 6
+)
+
+// OwnerNeutral marks wild animals; not an index into the player table.
+const OwnerNeutral uint8 = 0xFF
+
+// Phase-3 balance constants. Building numbers live in data/buildings.json,
+// unit numbers in data/units.json.
+const (
 	BuildingHP int32 = 200
 
-	// VillagerSpeed is ~1 tile/s at 20 Hz.
+	// VillagerSpeed is the fallback walk speed (~1 tile/s at 20 Hz);
+	// units with a def table entry move at their def speed.
 	VillagerSpeed fixed.F16 = 3277
 
 	// WorkRange is how close a worker must stand to a node or site.
 	WorkRange fixed.F16 = 1<<16 + 1<<15 // 1.5 tiles
 
 	// Vision radii in tiles (fog of war).
-	VillagerVision = 6
 	BuildingVision = 8
 	SiteVision     = 4
+	// VillagerVision is the fallback when a unit has no def entry.
+	VillagerVision = 6
 
 	startWood  int32 = 100
 	startStone int32 = 50
@@ -45,8 +67,13 @@ const (
 	// StartPopCap is the food-population cap before any hut is built.
 	StartPopCap int32 = 5
 
-	// MaxTrainQueue bounds queued villagers per building.
+	// MaxTrainQueue bounds queued units per building.
 	MaxTrainQueue int32 = 5
+
+	// FleeRadius is how close a threat must be to panic a fleeing animal.
+	FleeRadius int32 = 4
+	// FleeClearRadius is the distance at which a fleeing animal calms down.
+	FleeClearRadius int32 = 7
 
 	// MaxFields caps concurrent flow fields; the oldest is evicted.
 	MaxFields = 64
@@ -58,15 +85,26 @@ const (
 	MaxFieldSpan int32 = 192
 )
 
-// Unit is a worker (villager) entity payload.
+// Unit is a movable actor payload (worker, soldier or animal).
 type Unit struct {
-	Kind     uint8
-	Owner    uint8
-	State    uint8
-	X, Y     fixed.F16
-	TX, TY   fixed.F16
-	Target   entity.ID
-	Field    entity.ID
+	Kind  uint8
+	DefID uint16
+	Owner uint8
+	State uint8
+	X, Y  fixed.F16
+	TX, TY fixed.F16
+	// PatrolX/Y is the other end of a patrol segment.
+	PatrolX, PatrolY fixed.F16
+	// Target is a gather node or build site; AttackTarget is the unit id
+	// chased while State == UnitAttack.
+	Target       entity.ID
+	AttackTarget entity.ID
+	// Field is the active flow field; FieldX/Y its goal tile.
+	Field  entity.ID
+	FieldX int32
+	FieldY int32
+	// Cooldown ticks down between weapon strikes.
+	Cooldown int32
 	CarriedK resource.Kind
 	Carried  int32
 	HP       int32
@@ -82,17 +120,20 @@ type Node struct {
 }
 
 // Building is a constructed or constructing building payload. Progress is
-// the remaining build ticks (0 = complete).
+// the remaining build ticks (0 = complete). The train queue holds def ids
+// in TrainQueue[:TrainReq]; TrainCur is the def currently training.
 type Building struct {
-	DefID     uint16
-	Owner     uint8
-	TileX     int32
-	TileY     int32
-	Size      int32
-	Progress  int32
-	TrainLeft int32
-	TrainReq  int32
-	HP        int32
+	DefID      uint16
+	Owner      uint8
+	TileX      int32
+	TileY      int32
+	Size       int32
+	Progress   int32
+	TrainCur   uint16
+	TrainLeft  int32
+	TrainReq   int32
+	TrainQueue [MaxTrainQueue]uint16
+	HP         int32
 }
 
 // Player is one player's economy state.

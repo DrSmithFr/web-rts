@@ -5,6 +5,45 @@ merges (`vNN-phase-name`).
 
 ## Unreleased
 
+## [v05-combat-hunting-control-groups] - 2026-09-21
+
+Phase 5: the combat triangle, huntable wildlife, attack/patrol orders,
+control groups and real production queues.
+
+### Added
+
+- `sim/units`: unit definition table (`data/units.json`) for villager,
+  lancer, archer, scout, deer and boar: classes, damage types, armor,
+  +10 counter bonuses, costs, train buildings, corpse food, flee flag;
+  strict float-free parsing with validation tests.
+- Core: military units (Attack/Patrol/Retaliate/Auto-acquire states,
+  cooldowns, ranged reach via `range16`), wildlife (deer flee, boar
+  retaliate), death processing with pop release and animal corpses
+  becoming harvestable food nodes; neutral owner (`0xFF`); per-def
+  speeds and vision; world hash `rts.world/v5`.
+- `sim/worldgen`: animals placed around each spawn (3 deer + 2 boar);
+  map digest `rts.map/v3`.
+- Orders: `Attack` (7) and `Patrol` (8) with pinned wire vectors; `Train`
+  payload gains an optional unit-def id (old replays still decode).
+- `wasm`: 24-byte unit records (def, target, hp), 30-byte building
+  records (train queue), `unitDefs(id)` export.
+- `client`: class-aware unit rendering (beast bodies, lancer spear,
+  scout mount, health tint, neutral animal colors); right-click attacks
+  enemies and wildlife, shift+right-click patrols; control groups
+  (Ctrl+digit binds, digit recalls, Shift adds — `engine/groups.ts`);
+  per-unit train buttons with costs, live training progress and queue
+  count in the panel; barracks building; minimap shows neutral animals.
+
+### Changed
+
+- Replays regenerated for `rts.world/v5`; new `phase5_combat.rts`
+  scenario (deer hunt, barracks on both bases, stalled training
+  queues, patrol into enemy territory, cross-map attack) recorded,
+  verified and parity-checked; `make test-det`/`test-parity` now gate
+  four replays.
+- Training moved from the building def's single villager slot to the
+  per-unit queue (`TrainCur`/`TrainQueue`).
+
 ## [v04-pathfinding-fog-interpolation] - 2026-09-21
 
 Phase 4: flow-field pathfinding with formations, per-player three-state

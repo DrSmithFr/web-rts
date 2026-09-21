@@ -35,6 +35,18 @@
       "dropoff": true,
       "trainFood": 50,
       "trainTicks": 20
+    },
+    {
+      "id": 4,
+      "key": "barracks",
+      "costWood": 100,
+      "costStone": 0,
+      "buildTicks": 70,
+      "popRoom": 0,
+      "size": 2,
+      "dropoff": false,
+      "trainFood": 0,
+      "trainTicks": 0
     }
   ]
 }

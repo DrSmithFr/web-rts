@@ -1,4 +1,4 @@
-import { PALETTE, TERRAIN_COLORS } from './palette';
+import { TERRAIN_COLORS } from './palette';
 import { FogUnexplored, FogVisible, type FogView } from './fogView';
 
 // Canvas minimap: baked terrain layer, per-frame fog + unit overlay and
@@ -76,8 +76,7 @@ export class Minimap {
 
     const k = this.canvas.width / s;
     for (const u of units) {
-      ctx.fillStyle = `#${PALETTE.player0.toString(16).padStart(6, '0')}`;
-      ctx.fillStyle = u.owner === 0 ? '#ffffff' : '#d94f4f';
+      ctx.fillStyle = u.owner === 0 ? '#ffffff' : u.owner >= 8 ? '#9aa0a8' : '#d94f4f';
       ctx.fillRect(u.x * k - 1, u.y * k - 1, 2.5, 2.5);
     }
     ctx.strokeStyle = 'rgba(255,255,255,0.85)';

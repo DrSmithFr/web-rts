@@ -49,7 +49,7 @@ const (
 	goldSalt  = 0x52aa1c3d7e99f011
 	oilSalt   = 0x0c7e1d5b3a8f6249
 
-	hashLabel = "rts.map/v2"
+	hashLabel = "rts.map/v3"
 )
 
 // ErrNoSpawns means the map does not contain enough separated land patches
@@ -63,12 +63,26 @@ type Node struct {
 	Amount int32
 }
 
+// Animal is a wild unit spawn point; Def is the data/units.json unit id
+// (deer, boar). Animals are created as entities by the world, not the map.
+type Animal struct {
+	X, Y  int32
+	Def   uint16
+}
+
+// Animal unit def ids mirrored from data/units.json.
+const (
+	DefDeer uint16 = 5
+	DefBoar uint16 = 6
+)
+
 // Map is a generated world map.
 type Map struct {
-	grid   *terrain.Grid
-	spawns [][2]int
-	nodes  []Node
-	digest uint64
+	grid    *terrain.Grid
+	spawns  [][2]int
+	nodes   []Node
+	animals []Animal
+	digest  uint64
 }
 
 // Grid exposes the terrain grid.
@@ -81,13 +95,21 @@ func (m *Map) Spawns() [][2]int { return m.spawns }
 // per-player berry rings) order.
 func (m *Map) Nodes() []Node { return m.nodes }
 
+// Animals returns the wild animal spawn points in deterministic order.
+func (m *Map) Animals() []Animal { return m.animals }
+
 // Hash returns the canonical map digest.
 func (m *Map) Hash() uint64 { return m.digest }
 
 // Custom wraps a hand-made grid, spawns and nodes into a Map (tests and
 // scenario tools). The digest is computed like a generated map's.
 func Custom(grid *terrain.Grid, spawns [][2]int, nodes []Node) *Map {
-	m := &Map{grid: grid, spawns: spawns, nodes: nodes}
+	return CustomWithAnimals(grid, spawns, nodes, nil)
+}
+
+// CustomWithAnimals is Custom with explicit wild animal spawn points.
+func CustomWithAnimals(grid *terrain.Grid, spawns [][2]int, nodes []Node, animals []Animal) *Map {
+	m := &Map{grid: grid, spawns: spawns, nodes: nodes, animals: animals}
 	m.digest = hashMap(m)
 	return m
 }
@@ -121,8 +143,9 @@ func Generate(seed uint64, size, players int) (*Map, error) {
 	}
 	berries := stampBerries(g, spawns)
 	nodes := placeNodes(g, seed, berries)
+	animals := placeAnimals(g, spawns)
 
-	m := &Map{grid: g, spawns: spawns, nodes: nodes}
+	m := &Map{grid: g, spawns: spawns, nodes: nodes, animals: animals}
 	m.digest = hashMap(m)
 	return m, nil
 }
@@ -389,6 +412,37 @@ func placeNodes(g *terrain.Grid, seed uint64, berries [][2]int) []Node {
 	return nodes
 }
 
+// placeAnimals puts huntable wildlife around each spawn: three deer and
+// two boar at fixed ladder offsets, skipping tiles that are not open
+// ground so every start offers the same hunt.
+func placeAnimals(g *terrain.Grid, spawns [][2]int) []Animal {
+	deerOffsets := [][2]int{{10, 2}, {2, 11}, {-11, -3}, {12, 6}, {-6, 12}, {13, -2}}
+	boarOffsets := [][2]int{{12, -4}, {-9, 8}, {-12, -6}, {10, 10}, {-13, 4}, {6, -13}}
+	var out []Animal
+	place := func(s [2]int, offs [][2]int, def uint16, want int) {
+		done := 0
+		for _, o := range offs {
+			if done == want {
+				break
+			}
+			x, y := s[0]+o[0], s[1]+o[1]
+			if !g.InBounds(x, y) {
+				continue
+			}
+			switch g.Tile(x, y) {
+			case terrain.Grass, terrain.Forest:
+				out = append(out, Animal{X: int32(x), Y: int32(y), Def: def})
+				done++
+			}
+		}
+	}
+	for _, s := range spawns {
+		place(s, deerOffsets, DefDeer, 3)
+		place(s, boarOffsets, DefBoar, 2)
+	}
+	return out
+}
+
 // hashMap digests the full map state: layout, terrain, heights, spawns and nodes.
 func hashMap(m *Map) uint64 {
 	h := hash.New()
@@ -406,6 +460,12 @@ func hashMap(m *Map) uint64 {
 		h.WriteU32(uint32(n.Y))
 		h.WriteU32(uint32(n.Kind))
 		h.WriteU32(uint32(n.Amount))
+	}
+	h.WriteU32(uint32(len(m.animals)))
+	for _, a := range m.animals {
+		h.WriteU32(uint32(a.X))
+		h.WriteU32(uint32(a.Y))
+		h.WriteU32(uint32(a.Def))
 	}
 	for _, t := range m.grid.Tiles() {
 		h.WriteU32(uint32(t))

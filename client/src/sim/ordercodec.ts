@@ -9,6 +9,8 @@ export const OrderKind = {
   Stop: 4,
   Train: 5,
   MoveGroup: 6,
+  Attack: 7,
+  Patrol: 8,
 } as const;
 
 export interface MoveItem {
@@ -72,9 +74,29 @@ export function stopPayload(ids: number[]): Uint8Array {
   return w.out();
 }
 
-export function trainPayload(building: number): Uint8Array {
+export function trainPayload(building: number, unitDef?: number): Uint8Array {
   const w = new Writer();
   w.uvarint(building);
+  if (unitDef !== undefined) w.uvarint(unitDef);
+  return w.out();
+}
+
+// attackPayload: group attacks one target entity.
+export function attackPayload(ids: number[], target: number): Uint8Array {
+  const w = new Writer();
+  w.uvarint(ids.length);
+  for (const id of ids) w.uvarint(id);
+  w.uvarint(target);
+  return w.out();
+}
+
+// patrolPayload: group ping-pong patrol to a tile (1/16 tile units).
+export function patrolPayload(ids: number[], x16: number, y16: number): Uint8Array {
+  const w = new Writer();
+  w.uvarint(ids.length);
+  for (const id of ids) w.uvarint(id);
+  w.u16(x16);
+  w.u16(y16);
   return w.out();
 }
 

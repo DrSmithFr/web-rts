@@ -30,7 +30,14 @@ export const PALETTE = {
   player5: 0xd94fb2,
   player6: 0x4fd9d9,
   player7: 0xb8d94f,
+
+  deer: 0xb08a5a,
+  boar: 0x6f6257,
+  mount: 0x6b4f3a,
 } as const;
+
+// Scout mount color (kept as a named export for the actors module).
+export const MOUNT_COLOR: number = PALETTE.mount;
 
 // Player body colors, indexed by owner id.
 export const PLAYER_COLORS: number[] = [

@@ -1,13 +1,32 @@
 package core
 
 import (
+	"fmt"
+
 	"rts/sim/entity"
 	"rts/sim/fixed"
 	"rts/sim/orders"
 	"rts/sim/path"
 	"rts/sim/resource"
 	"rts/sim/terrain"
+	"rts/sim/units"
 )
+
+// speedOf returns a unit's per-tick move speed.
+func (w *World) speedOf(u *Unit) fixed.F16 {
+	if d := w.udefs.Get(u.DefID); d != nil && d.Speed16 > 0 {
+		return fixed.F16(d.Speed16)
+	}
+	return VillagerSpeed
+}
+
+// visionOf returns a unit's fog reveal radius in tiles.
+func (w *World) visionOf(u *Unit) int {
+	if d := w.udefs.Get(u.DefID); d != nil && d.Vision > 0 {
+		return int(d.Vision)
+	}
+	return VillagerVision
+}
 
 // startBuildingOffsets are candidate storehouse footprints (top-left tile,
 // relative to spawn) tried in order until one is walkable and free.
@@ -52,6 +71,9 @@ func (w *World) initEconomy() {
 		for _, o := range villagerOffsets {
 			w.spawnVillagerAt(uint8(i), int32(s[0])+o[0], int32(s[1])+o[1])
 		}
+	}
+	for _, a := range w.gameMap.Animals() {
+		w.spawnUnit(OwnerNeutral, a.Def, tileCenter(a.X), tileCenter(a.Y))
 	}
 }
 
@@ -121,8 +143,11 @@ func (w *World) updateVision() {
 		}
 	}
 	w.units.Each(func(_ entity.ID, u *Unit) {
+		if u.Owner >= MaxPlayers {
+			return
+		}
 		if w.players[u.Owner].Active {
-			w.fogs[u.Owner].ApplyCircle(int(tileOf(u.X)), int(tileOf(u.Y)), VillagerVision)
+			w.fogs[u.Owner].ApplyCircle(int(tileOf(u.X)), int(tileOf(u.Y)), w.visionOf(u))
 		}
 	})
 	w.buildings.Each(func(_ entity.ID, b *Building) {
@@ -140,17 +165,31 @@ func (w *World) updateVision() {
 }
 
 func (w *World) spawnVillagerAt(owner uint8, tx, ty int32) {
-	_, u := w.units.Create()
-	u.Kind = UnitVillager
-	u.Owner = owner
-	u.X, u.Y = tileCenter(tx), tileCenter(ty)
-	u.HP = VillagerHP
-	w.players[owner].Pop++
+	w.spawnUnit(owner, DefVillager, tileCenter(tx), tileCenter(ty))
 }
 
-// spawnVillagerNear places a trained villager on the first free tile in a
+// spawnUnit creates a unit of the given def, counts population for real
+// players and returns its id. Unknown defs panic (data bug).
+func (w *World) spawnUnit(owner uint8, defID uint16, x, y fixed.F16) entity.ID {
+	def := w.udefs.Get(defID)
+	if def == nil {
+		panic(fmt.Sprintf("core: spawn unknown unit def %d", defID))
+	}
+	id, u := w.units.Create()
+	u.DefID = defID
+	u.Kind = def.Kind()
+	u.Owner = owner
+	u.X, u.Y = x, y
+	u.HP = def.HP
+	if owner < MaxPlayers {
+		w.players[owner].Pop += def.PopCost
+	}
+	return id
+}
+
+// spawnVillagerNear places a trained unit on the first free tile in a
 // widening ring around the building.
-func (w *World) spawnVillagerNear(owner uint8, b *Building) {
+func (w *World) spawnUnitNear(owner uint8, udef *units.Def, b *Building) {
 	cx, cy := b.TileX+(b.Size-1)/2, b.TileY+(b.Size-1)/2
 	for r := int32(1); r <= 4; r++ {
 		for dy := -r; dy <= r; dy++ {
@@ -160,13 +199,13 @@ func (w *World) spawnVillagerNear(owner uint8, b *Building) {
 					continue
 				}
 				if !w.occupied[int(ty)*w.gameMap.Grid().Size()+int(tx)] {
-					w.spawnVillagerAt(owner, tx, ty)
+					w.spawnUnit(owner, udef.ID, tileCenter(tx), tileCenter(ty))
 					return
 				}
 			}
 		}
 	}
-	w.spawnVillagerAt(owner, cx, cy)
+	w.spawnUnit(owner, udef.ID, tileCenter(cx), tileCenter(cy))
 }
 
 func (w *World) popCap(owner uint8) int32 {
@@ -414,28 +453,56 @@ func (w *World) applyStop(player uint8, p []byte) bool {
 		if u := w.units.Get(id); u != nil && u.Owner == player {
 			u.State = UnitIdle
 			u.Target = entity.Nil
+			u.AttackTarget = entity.Nil
 		}
 	}
 	return r.OK()
 }
 
+// applyTrain queues one unit def at a building. Payloads without a unit
+// def keep the historical "train a villager" meaning. Costs and the
+// population cap are checked when training actually starts.
 func (w *World) applyTrain(player uint8, p []byte) bool {
 	r := orders.NewReader(p)
 	id := entity.ID(r.Uvarint())
-	if b := w.buildings.Get(id); b != nil && b.Owner == player {
-		if def := w.bdefs.Get(b.DefID); def != nil && def.TrainTicks > 0 && b.TrainReq < MaxTrainQueue {
-			b.TrainReq++
-		}
+	defID := uint16(DefVillager)
+	if r.Remaining() > 0 {
+		defID = uint16(r.Uvarint())
 	}
-	return r.OK()
+	if !r.OK() {
+		return false
+	}
+	b := w.buildings.Get(id)
+	if b == nil || b.Owner != player {
+		return true
+	}
+	if b.TrainReq >= MaxTrainQueue {
+		return true
+	}
+	udef := w.udefs.Get(defID)
+	if udef == nil || udef.TrainBy != b.DefID {
+		return true
+	}
+	b.TrainQueue[b.TrainReq] = defID
+	b.TrainReq++
+	return true
 }
 
-// updateUnits runs one tick of the villager state machine.
+// updateUnits runs one tick of the unit state machines.
 func (w *World) updateUnits() {
-	w.units.Each(func(_ entity.ID, u *Unit) {
+	w.units.Each(func(id entity.ID, u *Unit) {
+		if u.State == UnitIdle && u.Owner == OwnerNeutral {
+			u.State = UnitWander
+		}
 		switch u.State {
 		case UnitMove:
 			w.moveUnit(u)
+		case UnitPatrol:
+			w.patrolStep(u)
+		case UnitWander:
+			w.wanderStep(id, u)
+		case UnitFlee:
+			w.fleeStep(u)
 		case UnitGather:
 			n := w.nodes.Get(u.Target)
 			if n == nil || n.Amount <= 0 {
@@ -457,7 +524,7 @@ func (w *World) updateUnits() {
 					u.State = UnitReturn
 				}
 			} else {
-				stepToward(&u.X, &u.Y, n.X, n.Y)
+				stepToward(&u.X, &u.Y, n.X, n.Y, w.speedOf(u))
 			}
 		case UnitReturn:
 			d := w.nearestDropoff(u)
@@ -480,7 +547,7 @@ func (w *World) updateUnits() {
 					u.Target = entity.Nil
 				}
 			} else {
-				stepToward(&u.X, &u.Y, bx, by)
+				stepToward(&u.X, &u.Y, bx, by, w.speedOf(u))
 			}
 		case UnitBuild:
 			b := w.buildings.Get(u.Target)
@@ -496,7 +563,7 @@ func (w *World) updateUnits() {
 			}
 			bx, by := buildingCenter(b)
 			if !near(u.X, u.Y, bx, by, WorkRange+fixed.F16(b.Size>>1)<<16) {
-				stepToward(&u.X, &u.Y, bx, by)
+				stepToward(&u.X, &u.Y, bx, by, w.speedOf(u))
 			}
 		}
 	})
@@ -523,7 +590,7 @@ func (w *World) moveUnit(u *Unit) {
 			default:
 				nx, ny, ok := path.NextStep(f, w.tileWalkable, w.tileBlocked, cx, cy)
 				if ok {
-					stepToward(&u.X, &u.Y, tileCenter(nx), tileCenter(ny))
+					stepToward(&u.X, &u.Y, tileCenter(nx), tileCenter(ny), w.speedOf(u))
 					return
 				}
 				w.fields.Free(u.Field)
@@ -536,7 +603,40 @@ func (w *World) moveUnit(u *Unit) {
 		u.State = UnitIdle
 		return
 	}
-	stepToward(&u.X, &u.Y, u.TX, u.TY)
+	stepToward(&u.X, &u.Y, u.TX, u.TY, w.speedOf(u))
+}
+
+// followField advances u one step along a flow field toward goal tile
+// (gx, gy), (re)creating the field when missing or stale. Returns true
+// when the field is driving the walker this tick.
+func (w *World) followField(u *Unit, gx, gy int32) bool {
+	if u.Field != entity.Nil && (u.FieldX != gx || u.FieldY != gy) {
+		u.Field = entity.Nil // stale goal; the pool evicts old fields
+	}
+	if u.Field == entity.Nil {
+		u.Field = w.addFlowField([][2]int32{{tileOf(u.X), tileOf(u.Y)}}, gx, gy)
+		u.FieldX, u.FieldY = gx, gy
+	}
+	f := w.fields.Get(u.Field)
+	if f == nil {
+		return false
+	}
+	cx, cy := tileOf(u.X), tileOf(u.Y)
+	d := f.Distance(cx, cy)
+	if d == path.Unreachable {
+		u.Field = entity.Nil
+		return false
+	}
+	if d == 0 || f.AtGoal(cx, cy) {
+		return false
+	}
+	nx, ny, ok := path.NextStep(f, w.tileWalkable, w.tileBlocked, cx, cy)
+	if !ok {
+		u.Field = entity.Nil
+		return false
+	}
+	stepToward(&u.X, &u.Y, tileCenter(nx), tileCenter(ny), w.speedOf(u))
+	return true
 }
 
 func buildingCenter(b *Building) (fixed.F16, fixed.F16) {
@@ -587,28 +687,53 @@ func (w *World) updateBuildings() {
 			}
 		}
 		def := w.bdefs.Get(b.DefID)
-		if def == nil || def.TrainTicks <= 0 {
+		if def == nil {
 			return
 		}
 		pl := &w.players[b.Owner]
 		switch {
-		case b.TrainLeft > 0:
+		case b.TrainCur != 0:
 			b.TrainLeft--
-			if b.TrainLeft == 0 {
-				w.spawnVillagerNear(b.Owner, b)
+			if b.TrainLeft <= 0 {
+				if udef := w.udefs.Get(b.TrainCur); udef != nil {
+					w.spawnUnitNear(b.Owner, udef, b)
+				}
+				b.TrainCur = 0
 			}
 		case b.TrainReq > 0:
-			if pl.Pop < w.popCap(b.Owner) && pl.Res[resource.Food] >= def.TrainFood {
-				pl.Res[resource.Food] -= def.TrainFood
-				b.TrainLeft = def.TrainTicks
-				b.TrainReq--
+			udef := w.udefs.Get(b.TrainQueue[0])
+			if udef == nil {
+				shiftTrainQueue(b)
+				break
+			}
+			if pl.Pop+udef.PopCost <= w.popCap(b.Owner) &&
+				pl.Res[resource.Food] >= udef.CostFood &&
+				pl.Res[resource.Wood] >= udef.CostWood &&
+				pl.Res[resource.Gold] >= udef.CostGold {
+				pl.Res[resource.Food] -= udef.CostFood
+				pl.Res[resource.Wood] -= udef.CostWood
+				pl.Res[resource.Gold] -= udef.CostGold
+				shiftTrainQueue(b)
+				b.TrainCur = udef.ID
+				b.TrainLeft = udef.TrainTicks
 			}
 		}
 	})
 }
 
-func stepToward(x, y *fixed.F16, tx, ty fixed.F16) bool {
-	step := VillagerSpeed
+// shiftTrainQueue pops the front queue entry.
+func shiftTrainQueue(b *Building) {
+	for i := int32(0); i+1 < MaxTrainQueue; i++ {
+		b.TrainQueue[i] = b.TrainQueue[i+1]
+	}
+	b.TrainQueue[MaxTrainQueue-1] = 0
+	if b.TrainReq > 0 {
+		b.TrainReq--
+	}
+}
+
+func stepToward(x, y *fixed.F16, tx, ty, speed fixed.F16) bool {
+	step := speed
 	dx := tx.Sub(*x)
 	dy := ty.Sub(*y)
 	ax, ay := abs16(dx), abs16(dy)
