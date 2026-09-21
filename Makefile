@@ -4,6 +4,7 @@
 GO     ?= go
 GOROOT ?= $(shell $(GO) env GOROOT)
 REPLAY := tools/replays/phase1_noop.rts
+ECONOMY := tools/replays/phase3_economy.rts
 
 ifeq ($(OS),Windows_NT)
 DETCHECK := bin\detcheck.exe
@@ -33,11 +34,15 @@ test-sim:
 
 test-det: bin/detcheck
 	$(DETCHECK) -verify $(REPLAY)
+	$(DETCHECK) -verify $(ECONOMY)
 
 test-parity: wasm bin/detcheck
 	node tools/fsutil.mjs mkdir build
 	$(DETCHECK) -replay $(REPLAY) > build/native.txt
 	node tools/parity/run.mjs $(REPLAY) > build/wasm.txt
+	node tools/parity/check.mjs build/native.txt build/wasm.txt
+	$(DETCHECK) -replay $(ECONOMY) > build/native.txt
+	node tools/parity/run.mjs $(ECONOMY) > build/wasm.txt
 	node tools/parity/check.mjs build/native.txt build/wasm.txt
 
 test-client: client/node_modules
