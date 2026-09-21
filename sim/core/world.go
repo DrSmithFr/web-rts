@@ -22,12 +22,13 @@ import (
 	"rts/sim/path"
 	"rts/sim/proto"
 	"rts/sim/rng"
+	"rts/sim/units"
 	"rts/sim/worldgen"
 )
 
 const (
 	// WorldVersion bumps whenever the hash layout changes.
-	WorldVersion uint64 = 4
+	WorldVersion uint64 = 5
 
 	// HashPeriodTicks is how often peers exchange state hashes on the
 	// wire (and how often replays checkpoint).
@@ -36,7 +37,7 @@ const (
 	// MaxPlayers is the fixed player table size.
 	MaxPlayers = 8
 
-	hashLabel = "rts.world/v4"
+	hashLabel = "rts.world/v5"
 )
 
 // World is the full simulation state.
@@ -48,6 +49,7 @@ type World struct {
 	applied   uint64
 	rejected  uint64
 	bdefs     *building.Table
+	udefs     *units.Table
 	players   [MaxPlayers]Player
 	units     *entity.Store[Unit]
 	nodes     *entity.Store[Node]
@@ -86,6 +88,7 @@ func newWorld(seed uint64, m *worldgen.Map) *World {
 		gameMap:   m,
 		streams:   rng.NewStreams(seed),
 		bdefs:     building.MustLoad(),
+		udefs:     units.MustLoad(),
 		units:     entity.New[Unit](),
 		nodes:     entity.New[Node](),
 		buildings: entity.New[Building](),
@@ -117,6 +120,9 @@ func (w *World) Players() *[MaxPlayers]Player { return &w.players }
 
 // BuildingDefs returns the loaded balance table.
 func (w *World) BuildingDefs() *building.Table { return w.bdefs }
+
+// UnitDefs returns the loaded unit balance table.
+func (w *World) UnitDefs() *units.Table { return w.udefs }
 
 // PopCap returns the population cap for a player.
 func (w *World) PopCap(owner uint8) int32 { return w.popCap(owner) }
@@ -158,6 +164,10 @@ func (w *World) Step(due []proto.Order) {
 			ok = w.applyTrain(o.Player, o.Payload)
 		case orders.MoveGroup:
 			ok = w.applyMoveGroup(o.Player, o.Payload)
+		case orders.Attack:
+			ok = w.applyAttack(o.Player, o.Payload)
+		case orders.Patrol:
+			ok = w.applyPatrol(o.Player, o.Payload)
 		default:
 			w.rejected++
 			continue
@@ -169,6 +179,7 @@ func (w *World) Step(due []proto.Order) {
 		}
 	}
 	w.updateUnits()
+	w.combatPhase()
 	w.updateBuildings()
 	w.updateVision()
 	for d := rng.Domain(0); d < rng.DomainCount; d++ {
@@ -206,11 +217,14 @@ func (w *World) Hash() uint64 {
 	w.units.Each(func(id entity.ID, u *Unit) {
 		h.WriteU32(uint32(id))
 		h.WriteU32(uint32(u.Kind))
+		h.WriteU32(uint32(u.DefID))
 		h.WriteU32(uint32(u.Owner))
 		h.WriteU32(uint32(u.State))
 		h.WriteU32(uint32(u.X))
 		h.WriteU32(uint32(u.Y))
 		h.WriteU32(uint32(u.Target))
+		h.WriteU32(uint32(u.AttackTarget))
+		h.WriteU64(uint64(int64(u.Cooldown)))
 		h.WriteU32(uint32(u.CarriedK))
 		h.WriteU64(uint64(int64(u.Carried)))
 		h.WriteU64(uint64(int64(u.HP)))
@@ -232,8 +246,12 @@ func (w *World) Hash() uint64 {
 		h.WriteU32(uint32(b.TileY))
 		h.WriteU32(uint32(b.Size))
 		h.WriteU64(uint64(int64(b.Progress)))
+		h.WriteU32(uint32(b.TrainCur))
 		h.WriteU64(uint64(int64(b.TrainLeft)))
 		h.WriteU64(uint64(int64(b.TrainReq)))
+		for i := int32(0); i < b.TrainReq && i < MaxTrainQueue; i++ {
+			h.WriteU32(uint32(b.TrainQueue[i]))
+		}
 		h.WriteU64(uint64(int64(b.HP)))
 	})
 	h.Write(w.streams.AppendState(nil))

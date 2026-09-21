@@ -60,7 +60,27 @@ func encodeArgs(t *testing.T, kind, args string) []byte {
 		}
 		return StopPayload(ids)
 	case "train":
+		f := strings.Split(args, ":")
+		if len(f) == 2 {
+			return TrainPayload(u32(t, f[0]), u16(t, f[1]))
+		}
 		return TrainPayload(u32(t, args))
+	case "attack":
+		idsPart, target, _ := strings.Cut(args, ":")
+		var ids []uint32
+		for _, s := range strings.Split(idsPart, ";") {
+			ids = append(ids, u32(t, s))
+		}
+		return AttackPayload(ids, u32(t, target))
+	case "patrol":
+		idsxy, _, _ := strings.Cut(args, ":")
+		var ids []uint32
+		for _, s := range strings.Split(idsxy, ";") {
+			ids = append(ids, u32(t, s))
+		}
+		xyPart := args[len(idsxy)+1:]
+		xs, ys, _ := strings.Cut(xyPart, ",")
+		return PatrolPayload(ids, u16(t, xs), u16(t, ys))
 	case "move-group":
 		idsxy, _, _ := strings.Cut(args, ":")
 		var ids []uint32
@@ -111,8 +131,45 @@ func decodeArgs(t *testing.T, kind, args string, raw []byte) {
 			}
 		}
 	case "train":
-		if uint32(r.Uvarint()) != u32(t, args) {
+		f := strings.Split(args, ":")
+		if uint32(r.Uvarint()) != u32(t, f[0]) {
 			t.Error("train mismatch")
+		}
+		if len(f) == 2 {
+			if uint32(r.Uvarint()) != u32(t, f[1]) {
+				t.Error("train unit def mismatch")
+			}
+		}
+	case "attack":
+		idsPart, target, _ := strings.Cut(args, ":")
+		n := int(r.Uvarint())
+		if n != len(strings.Split(idsPart, ";")) {
+			t.Fatalf("attack n %d", n)
+		}
+		for _, want := range strings.Split(idsPart, ";") {
+			if uint32(r.Uvarint()) != u32(t, want) {
+				t.Error("attack id mismatch")
+			}
+		}
+		if uint32(r.Uvarint()) != u32(t, target) {
+			t.Error("attack target mismatch")
+		}
+	case "patrol":
+		idsxy, _, _ := strings.Cut(args, ":")
+		ids := strings.Split(idsxy, ";")
+		n := int(r.Uvarint())
+		if n != len(ids) {
+			t.Fatalf("patrol n %d want %d", n, len(ids))
+		}
+		for _, want := range ids {
+			if uint32(r.Uvarint()) != u32(t, want) {
+				t.Error("patrol id mismatch")
+			}
+		}
+		xyPart := args[len(idsxy)+1:]
+		xs, ys, _ := strings.Cut(xyPart, ",")
+		if r.U16() != u16(t, xs) || r.U16() != u16(t, ys) {
+			t.Error("patrol coords mismatch")
 		}
 	case "move-group":
 		idsxy, _, _ := strings.Cut(args, ":")

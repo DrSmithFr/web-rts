@@ -13,6 +13,8 @@ const (
 	Stop      = 4
 	Train     = 5
 	MoveGroup = 6
+	Attack    = 7
+	Patrol    = 8
 )
 
 // MoveItem is one unit destination in a group move.
@@ -78,16 +80,44 @@ func StopPayload(ids []uint32) []byte {
 	return w.Bytes()
 }
 
-// TrainPayload encodes "queue one villager at building".
-func TrainPayload(building uint32) []byte {
+// TrainPayload encodes "queue one villager at building". A payload without
+// the trailing unit def keeps the historical villager-only meaning.
+func TrainPayload(building uint32, unitDefs ...uint16) []byte {
 	w := NewWriter()
 	w.Uvarint(uint64(building))
+	for _, d := range unitDefs {
+		w.Uvarint(uint64(d))
+	}
 	return w.Bytes()
 }
 
 // MoveGroupPayload encodes a group move to one base tile; the simulation
 // assigns formation slots deterministically in id order.
 func MoveGroupPayload(ids []uint32, x16, y16 uint16) []byte {
+	w := NewWriter()
+	w.Uvarint(uint64(len(ids)))
+	for _, id := range ids {
+		w.Uvarint(uint64(id))
+	}
+	w.U16(x16)
+	w.U16(y16)
+	return w.Bytes()
+}
+
+// AttackPayload encodes "group attacks one target entity".
+func AttackPayload(ids []uint32, target uint32) []byte {
+	w := NewWriter()
+	w.Uvarint(uint64(len(ids)))
+	for _, id := range ids {
+		w.Uvarint(uint64(id))
+	}
+	w.Uvarint(uint64(target))
+	return w.Bytes()
+}
+
+// PatrolPayload encodes a group patrol to a tile: each unit ping-pongs
+// between its current position and the destination.
+func PatrolPayload(ids []uint32, x16, y16 uint16) []byte {
 	w := NewWriter()
 	w.Uvarint(uint64(len(ids)))
 	for _, id := range ids {
@@ -136,6 +166,14 @@ func (r *Reader) U16() uint16 {
 
 // OK reports whether every read so far succeeded.
 func (r *Reader) OK() bool { return r.ok }
+
+// Remaining returns the unread byte count (0 at a well-formed end).
+func (r *Reader) Remaining() int {
+	if !r.ok {
+		return -1
+	}
+	return len(r.src) - r.pos
+}
 
 func appendUvarint(buf []byte, v uint64) []byte {
 	for v >= 0x80 {

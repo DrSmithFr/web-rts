@@ -21,21 +21,28 @@
 //	mapHashHex(id)        -> map digest, 16 lowercase hex digits
 //	spawnCount(id)        -> number of spawn points
 //	spawnAt(id, i)        -> packed spawn i as (x << 16) | y
-//	unitsBlob(id)         -> Uint8Array, 20-byte records: id u32, owner u8,
+//	unitsBlob(id)         -> Uint8Array, 24-byte records: id u32, owner u8,
 //	                          kind u8, state u8, carried u8, x16 u16, y16 u16,
-//	                          pad u16, target u32, carriedAmt u16 (LE)
+//	                          hp u16, def u16, target u32, carriedAmt u16,
+//	                          pad u16 (LE)
 //	nodesBlob(id)         -> Uint8Array, 16-byte records: id u32, kind u8,
 //	                          amount u16, x16 u16, y16 u16, tileX u16,
 //	                          tileY u16, pad u8
-//	buildingsBlob(id)     -> Uint8Array, 16-byte records: id u32, def u16,
-//	                          owner u8, progress u16, trainLeft u8,
-//	                          trainReq u8, tileX u16, tileY u16, pad u8
+//	buildingsBlob(id)     -> Uint8Array, 30-byte records: id u32, def u16,
+//	                          owner u8, pad u8, progress u16, trainCur u16,
+//	                          trainLeft u16, trainReq u16, tileX u16,
+//	                          tileY u16, queue u16 * 5 (LE)
 //	economyBlob(id)       -> Uint8Array, 32-byte records per player slot:
 //	                          active u8, pop u16, popCap u16, res u32 * 6
 //	fogBlob(id, player)   -> Uint8Array of 2-bit fog states, row-major
 //	defs(id)              -> array of building defs {id,key,costWood,
 //	                          costStone,buildTicks,popRoom,size,dropoff,
 //	                          trainFood,trainTicks}
+//	unitDefs(id)          -> array of unit defs {id,key,class,hp,speed16,
+//	                          vision,damage,damageType,armorPierce,
+//	                          armorCrush,range16,rate,costFood,costWood,
+//	                          costGold,popCost,trainBy,trainTicks,
+//	                          corpseFood,flee,minEra,bonuses:[{class,bonus}]}
 //	version()             -> bridge version string
 //
 // Invalid world ids panic, which surfaces as a JavaScript exception; that
@@ -188,7 +195,7 @@ func blob(n int, fill func(buf []byte)) js.Value {
 
 func unitsBlob(this js.Value, args []js.Value) any {
 	units := mustID(args).world.Units()
-	return blob(units.Len()*20, func(buf []byte) {
+	return blob(units.Len()*24, func(buf []byte) {
 		off := 0
 		units.Each(func(id entity.ID, u *core.Unit) {
 			binary.LittleEndian.PutUint32(buf[off:], uint32(id))
@@ -198,9 +205,11 @@ func unitsBlob(this js.Value, args []js.Value) any {
 			buf[off+7] = byte(u.CarriedK)
 			binary.LittleEndian.PutUint16(buf[off+8:], u16v(int32(u.X)>>12))
 			binary.LittleEndian.PutUint16(buf[off+10:], u16v(int32(u.Y)>>12))
-			binary.LittleEndian.PutUint32(buf[off+12:], uint32(u.Target))
-			binary.LittleEndian.PutUint16(buf[off+16:], u16v(u.Carried))
-			off += 20
+			binary.LittleEndian.PutUint16(buf[off+12:], u16v(u.HP))
+			binary.LittleEndian.PutUint16(buf[off+14:], u.DefID)
+			binary.LittleEndian.PutUint32(buf[off+16:], uint32(u.Target))
+			binary.LittleEndian.PutUint16(buf[off+20:], u16v(u.Carried))
+			off += 24
 		})
 	})
 }
@@ -224,18 +233,22 @@ func nodesBlob(this js.Value, args []js.Value) any {
 
 func buildingsBlob(this js.Value, args []js.Value) any {
 	bs := mustID(args).world.Buildings()
-	return blob(bs.Len()*16, func(buf []byte) {
+	return blob(bs.Len()*30, func(buf []byte) {
 		off := 0
 		bs.Each(func(id entity.ID, b *core.Building) {
 			binary.LittleEndian.PutUint32(buf[off:], uint32(id))
 			binary.LittleEndian.PutUint16(buf[off+4:], b.DefID)
 			buf[off+6] = b.Owner
-			binary.LittleEndian.PutUint16(buf[off+7:], u16v(b.Progress))
-			buf[off+9] = byte(b.TrainLeft)
-			buf[off+10] = byte(b.TrainReq)
-			binary.LittleEndian.PutUint16(buf[off+11:], u16v(b.TileX))
-			binary.LittleEndian.PutUint16(buf[off+13:], u16v(b.TileY))
-			off += 16
+			binary.LittleEndian.PutUint16(buf[off+8:], u16v(b.Progress))
+			binary.LittleEndian.PutUint16(buf[off+10:], b.TrainCur)
+			binary.LittleEndian.PutUint16(buf[off+12:], u16v(b.TrainLeft))
+			binary.LittleEndian.PutUint16(buf[off+14:], u16v(b.TrainReq))
+			binary.LittleEndian.PutUint16(buf[off+16:], u16v(b.TileX))
+			binary.LittleEndian.PutUint16(buf[off+18:], u16v(b.TileY))
+			for i := 0; i < 5; i++ {
+				binary.LittleEndian.PutUint16(buf[off+20+i*2:], b.TrainQueue[i])
+			}
+			off += 30
 		})
 	})
 }
@@ -289,6 +302,44 @@ func defs(this js.Value, args []js.Value) any {
 	return arr
 }
 
+func unitDefs(this js.Value, args []js.Value) any {
+	arr := js.Global().Get("Array").New()
+	for _, d := range mustID(args).world.UnitDefs().Defs() {
+		o := js.Global().Get("Object").New()
+		o.Set("id", d.ID)
+		o.Set("key", d.Key)
+		o.Set("class", d.Class)
+		o.Set("hp", d.HP)
+		o.Set("speed16", d.Speed16)
+		o.Set("vision", d.Vision)
+		o.Set("damage", d.Damage)
+		o.Set("damageType", d.DamageType)
+		o.Set("armorPierce", d.ArmorPierce)
+		o.Set("armorCrush", d.ArmorCrush)
+		o.Set("range16", d.Range16)
+		o.Set("rate", d.Rate)
+		o.Set("costFood", d.CostFood)
+		o.Set("costWood", d.CostWood)
+		o.Set("costGold", d.CostGold)
+		o.Set("popCost", d.PopCost)
+		o.Set("trainBy", d.TrainBy)
+		o.Set("trainTicks", d.TrainTicks)
+		o.Set("corpseFood", d.CorpseFood)
+		o.Set("flee", d.Flee)
+		o.Set("minEra", d.MinEra)
+		bonuses := js.Global().Get("Array").New()
+		for _, b := range d.Bonuses {
+			bo := js.Global().Get("Object").New()
+			bo.Set("class", b.Class)
+			bo.Set("bonus", b.Bonus)
+			bonuses.Call("push", bo)
+		}
+		o.Set("bonuses", bonuses)
+		arr.Call("push", o)
+	}
+	return arr
+}
+
 func main() {
 	obj := js.Global().Get("Object").New()
 	obj.Set("newWorld", js.FuncOf(newWorld))
@@ -308,6 +359,7 @@ func main() {
 	obj.Set("buildingsBlob", js.FuncOf(buildingsBlob))
 	obj.Set("economyBlob", js.FuncOf(economyBlob))
 	obj.Set("defs", js.FuncOf(defs))
+	obj.Set("unitDefs", js.FuncOf(unitDefs))
 	obj.Set("fogBlob", js.FuncOf(fogBlob))
 	obj.Set("version", js.FuncOf(version))
 	js.Global().Set("RTSSim", obj)

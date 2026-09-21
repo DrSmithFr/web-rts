@@ -3,10 +3,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
+  attackPayload,
   buildPayload,
   gatherPayload,
   moveGroupPayload,
   movePayload,
+  patrolPayload,
   stopPayload,
   trainPayload,
   PayloadReader,
@@ -55,8 +57,19 @@ function encode(kind: string, args: string): Uint8Array {
     }
     case 'stop':
       return stopPayload(args.split(';').map(Number));
-    case 'train':
-      return trainPayload(Number(args));
+    case 'train': {
+      const parts = args.split(':').map(Number);
+      return parts.length === 2 ? trainPayload(parts[0], parts[1]) : trainPayload(parts[0]);
+    }
+    case 'attack': {
+      const [idsPart, target] = args.split(':');
+      return attackPayload(idsPart.split(';').map(Number), Number(target));
+    }
+    case 'patrol': {
+      const [idsPart, xy] = args.split(':');
+      const [x, y] = xy.split(',');
+      return patrolPayload(idsPart.split(';').map(Number), Number(x), Number(y));
+    }
     case 'move-group': {
       const [idsPart, xy] = args.split(':');
       const [x, y] = xy.split(',');

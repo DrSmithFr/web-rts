@@ -29,7 +29,10 @@ func main() {
 		{"build", "3:1:7:9", hexOf(orders.BuildPayload(3, 1, 7, 9))},
 		{"stop", "1;2;3", hexOf(orders.StopPayload([]uint32{1, 2, 3}))},
 		{"train", "196608", hexOf(orders.TrainPayload(196608))},
+		{"train", "196608:3", hexOf(orders.TrainPayload(196608, 3))},
 		{"move-group", "7;8;9:112,128", hexOf(orders.MoveGroupPayload([]uint32{7, 8, 9}, 112, 128))},
+		{"attack", "7;8:65537", hexOf(orders.AttackPayload([]uint32{7, 8}, 65537))},
+		{"patrol", "7;8:96,200", hexOf(orders.PatrolPayload([]uint32{7, 8}, 96, 200))},
 		{"move", "", hexOf(orders.MovePayload(nil))},
 	}
 	for _, v := range vecs {

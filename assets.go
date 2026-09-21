@@ -8,3 +8,8 @@ import _ "embed"
 //
 //go:embed data/buildings.json
 var BuildingsJSON []byte
+
+// UnitsJSON is the raw content of data/units.json.
+//
+//go:embed data/units.json
+var UnitsJSON []byte

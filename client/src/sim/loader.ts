@@ -18,6 +18,7 @@ export interface RawSim {
   buildingsBlob(id: number): Uint8Array;
   economyBlob(id: number): Uint8Array;
   defs(id: number): BuildingDefJson[];
+  unitDefs(id: number): UnitDefJson[];
   fogBlob(id: number, player: number): Uint8Array;
 }
 
@@ -32,6 +33,36 @@ export interface BuildingDefJson {
   dropoff: boolean;
   trainFood: number;
   trainTicks: number;
+}
+
+export interface UnitBonusJson {
+  class: number;
+  bonus: number;
+}
+
+export interface UnitDefJson {
+  id: number;
+  key: string;
+  class: number;
+  hp: number;
+  speed16: number;
+  vision: number;
+  damage: number;
+  damageType: number;
+  armorPierce: number;
+  armorCrush: number;
+  range16: number;
+  rate: number;
+  costFood: number;
+  costWood: number;
+  costGold: number;
+  popCost: number;
+  trainBy: number;
+  trainTicks: number;
+  corpseFood: number;
+  flee: boolean;
+  minEra: number;
+  bonuses: UnitBonusJson[];
 }
 
 declare global {
