@@ -129,3 +129,65 @@ func TestRejectsBadParams(t *testing.T) {
 		t.Error("zero players accepted")
 	}
 }
+
+func TestNodesPlaced(t *testing.T) {
+	m, err := Generate(0x5eed, DefaultSize, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wood, stone, food, gold, oil int
+	byTile := make(map[[2]int32]bool)
+	for _, n := range m.Nodes() {
+		key := [2]int32{n.X, n.Y}
+		if byTile[key] {
+			t.Fatalf("two nodes on tile %v", key)
+		}
+		byTile[key] = true
+		switch n.Kind {
+		case 1:
+			wood++
+		case 2:
+			stone++
+		case 3:
+			food++
+		case 4:
+			gold++
+		case 5:
+			oil++
+		}
+	}
+	if wood < 1000 || stone < 100 || gold < 20 {
+		t.Fatalf("too few nodes: wood=%d stone=%d gold=%d", wood, stone, gold)
+	}
+	// 4 spawns x 4 berries, minus water skips.
+	if food > 16 {
+		t.Fatalf("berries %d, want <= 16", food)
+	}
+}
+
+func TestSpawnHasNearbyBerries(t *testing.T) {
+	for seed := uint64(1); seed <= 20; seed++ {
+		m, err := Generate(seed, DefaultSize, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range m.Spawns() {
+			found := 0
+			for _, n := range m.Nodes() {
+				if n.Kind == resourceFood && dist2(int(n.X), int(n.Y), s[0], s[1]) <= 9*9 {
+					found++
+				}
+			}
+			if found == 0 {
+				t.Fatalf("seed %d spawn %v has no berry node within 9", seed, s)
+			}
+		}
+	}
+}
+
+const resourceFood = 3
+
+func dist2(x1, y1, x2, y2 int) int {
+	dx, dy := x1-x2, y1-y2
+	return dx*dx + dy*dy
+}
