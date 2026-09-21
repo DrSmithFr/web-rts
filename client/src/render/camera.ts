@@ -15,8 +15,9 @@ export class RtsCamera {
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
     private readonly span: number,
+    private readonly groundHeight: (x: number, z: number) => number = () => 0,
   ) {
-    this.dist = span * 0.2;
+    this.dist = span * 0.1;
     this.target = new THREE.Vector3(span / 2, 0, span / 2);
   }
 
@@ -45,12 +46,13 @@ export class RtsCamera {
   }
 
   update(): void {
+    const h = this.groundHeight(this.target.x, this.target.z);
     const offset = new THREE.Vector3(
       Math.sin(this.yaw) * Math.cos(PITCH),
       Math.sin(PITCH),
       Math.cos(this.yaw) * Math.cos(PITCH),
     ).multiplyScalar(this.dist);
-    this.camera.position.copy(this.target).add(offset);
-    this.camera.lookAt(this.target);
+    this.camera.position.set(this.target.x + offset.x, h + offset.y, this.target.z + offset.z);
+    this.camera.lookAt(this.target.x, h, this.target.z);
   }
 }

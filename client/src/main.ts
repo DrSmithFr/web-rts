@@ -98,7 +98,8 @@ try {
 
   const interp = new Interpolated();
 
-  const rtsCam = new RtsCamera(camera, size);
+  const rtsCam = new RtsCamera(camera, size, (x, z) =>
+    groundY(Math.min(size - 1, Math.max(0, Math.floor(x))), Math.min(size - 1, Math.max(0, Math.floor(z)))));
   const home = world.spawns()[LOCAL_PLAYER] ?? { x: size / 2, y: size / 2 };
   rtsCam.focus(home.x + 0.5, home.y + 0.5);
   rtsCam.zoom(0.5);
@@ -428,7 +429,6 @@ try {
   });
 
   function applySelection(): void {
-    actors.setSelection(selection.toArray());
     selectedEl.textContent = String(selection.size);
     renderPanel();
   }
@@ -542,6 +542,8 @@ try {
         (b) => b.owner === LOCAL_PLAYER || fogView.visible(b.tileX, b.tileY),
       );
       actors.setBuildings(buildings, defById);
+      // Refresh every frame so rings track interpolated movement.
+      actors.setSelection(selection.toArray());
 
       const tick = world.tick();
       if (tick % 10 === 0) {

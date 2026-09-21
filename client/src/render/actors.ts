@@ -45,6 +45,9 @@ export function buildActors(size: number, heights: Uint16Array): Actors {
   const unitMesh = new THREE.InstancedMesh(bodyGeo, bodyMat, UNIT_CAP);
   unitMesh.castShadow = true;
   unitMesh.count = 0;
+  // Instance matrices move every frame and three caches the bounding sphere
+  // on first use; culling would keep the mesh invisible forever.
+  unitMesh.frustumCulled = false;
   group.add(unitMesh);
 
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
@@ -53,6 +56,7 @@ export function buildActors(size: number, heights: Uint16Array): Actors {
   const buildMesh = new THREE.InstancedMesh(boxGeo, buildMat, BUILDING_CAP);
   buildMesh.castShadow = true;
   buildMesh.count = 0;
+  buildMesh.frustumCulled = false;
   group.add(buildMesh);
 
   const ringGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.05, 16);
@@ -63,6 +67,7 @@ export function buildActors(size: number, heights: Uint16Array): Actors {
   });
   const rings = new THREE.InstancedMesh(ringGeo, ringMat, 64);
   rings.visible = false;
+  rings.frustumCulled = false;
   group.add(rings);
 
   const matrix = new THREE.Matrix4();
