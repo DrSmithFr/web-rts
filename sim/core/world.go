@@ -92,6 +92,9 @@ func (w *World) Players() *[MaxPlayers]Player { return &w.players }
 // BuildingDefs returns the loaded balance table.
 func (w *World) BuildingDefs() *building.Table { return w.bdefs }
 
+// PopCap returns the population cap for a player.
+func (w *World) PopCap(owner uint8) int32 { return w.popCap(owner) }
+
 // Tick returns the number of simulation ticks already executed.
 func (w *World) Tick() uint32 { return w.tick }
 
