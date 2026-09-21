@@ -12,7 +12,8 @@ export interface RenderUnit {
   yOff: number;
   carried: number;
 }
-import { HEIGHT_SCALE, PALETTE, PLAYER_COLORS } from './palette';
+import { PALETTE, PLAYER_COLORS } from './palette';
+import { heightSampler } from './height';
 
 // Dynamic entities: villagers as owner-colored instanced bodies, buildings
 // as owner-colored boxes (sites grow with progress), plus selection rings.
@@ -31,13 +32,7 @@ export interface Actors {
 
 export function buildActors(size: number, heights: Uint16Array): Actors {
   const group = new THREE.Group();
-  const groundY = (tx: number, ty: number): number =>
-    heights[ty * (size + 1) + tx] * HEIGHT_SCALE;
-  const heightAt = (x: number, y: number): number => {
-    const tx = Math.min(size - 1, Math.max(0, Math.floor(x)));
-    const ty = Math.min(size - 1, Math.max(0, Math.floor(y)));
-    return groundY(tx, ty);
-  };
+  const heightAt = heightSampler(size, heights);
 
   const bodyGeo = new THREE.CapsuleGeometry(0.16, 0.34, 2, 6);
   bodyGeo.translate(0, 0.33, 0);
@@ -106,7 +101,7 @@ export function buildActors(size: number, heights: Uint16Array): Actors {
         const sizeTiles = def ? def.size : 1;
         const done = def && def.buildTicks > 0 ? 1 - b.progress / def.buildTicks : 1;
         const h = 0.35 + 0.9 * done;
-        const p = new THREE.Vector3(b.tileX, groundY(b.tileX, b.tileY) + 0.02, b.tileY);
+        const p = new THREE.Vector3(b.tileX, heightAt(b.tileX, b.tileY) + 0.02, b.tileY);
         buildPos.set(b.id, p);
         matrix.compose(p, quat, scale.set(sizeTiles, h, sizeTiles));
         buildMesh.setMatrixAt(i, matrix);

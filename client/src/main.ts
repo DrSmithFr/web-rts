@@ -14,6 +14,7 @@ import { createScene } from './render/scene';
 import { buildMapObjects } from './render/objects';
 import { buildNodeObjects } from './render/nodes';
 import { buildActors } from './render/actors';
+import { heightSampler } from './render/height';
 import { RtsCamera } from './render/camera';
 import { HEIGHT_SCALE, PALETTE } from './render/palette';
 import { terrainName } from './render/terrainLabels';
@@ -98,8 +99,7 @@ try {
 
   const interp = new Interpolated();
 
-  const rtsCam = new RtsCamera(camera, size, (x, z) =>
-    groundY(Math.min(size - 1, Math.max(0, Math.floor(x))), Math.min(size - 1, Math.max(0, Math.floor(z)))));
+  const rtsCam = new RtsCamera(camera, size, heightSampler(size, heights));
   const home = world.spawns()[LOCAL_PLAYER] ?? { x: size / 2, y: size / 2 };
   rtsCam.focus(home.x + 0.5, home.y + 0.5);
   rtsCam.zoom(0.5);
