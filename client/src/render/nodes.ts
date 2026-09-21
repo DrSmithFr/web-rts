@@ -2,9 +2,11 @@ import * as THREE from 'three';
 
 import type { NodeRec } from '../sim/bridge';
 import { HEIGHT_SCALE, PALETTE } from './palette';
+import type { FogView } from './fogView';
 
 // Harvestable nodes rendered as instanced meshes, one per resource kind.
-// Oil is hidden until the Modern era. Visual scale tracks remaining amount.
+// Oil is hidden entirely (Modern era feature). Visual scale tracks
+// remaining amount; fog of war hides nodes in unexplored ground.
 
 const KIND_WOOD = 1;
 const KIND_STONE = 2;
@@ -13,18 +15,12 @@ const KIND_GOLD = 4;
 
 export interface NodeObjects {
   group: THREE.Group;
-  // update rescales depleting nodes; pass the latest node list.
   update(nodes: NodeRec[]): void;
+  setFog(fog: FogView | null): void;
 }
 
 function lambert(color: number): THREE.MeshLambertMaterial {
   return new THREE.MeshLambertMaterial({ color, flatShading: true });
-}
-
-function treeGeometry(): THREE.BufferGeometry {
-  const g = new THREE.CylinderGeometry(0.09, 0.14, 0.5, 5);
-  g.translate(0, 0.25, 0);
-  return g.toNonIndexed();
 }
 
 export function buildNodeObjects(
@@ -45,9 +41,12 @@ export function buildNodeObjects(
     lists.get(n.kind)?.push(n);
   }
 
-  const treeBody = treeGeometry();
+  const trunk = new THREE.CylinderGeometry(0.09, 0.14, 0.5, 5);
+  trunk.translate(0, 0.25, 0);
   const cone = new THREE.ConeGeometry(0.5, 1.2, 6);
   cone.translate(0, 1.05, 0);
+  const treeBody = trunk.toNonIndexed();
+  trunk.dispose();
 
   const geos: Record<number, THREE.BufferGeometry> = {
     [KIND_WOOD]: treeBody,
@@ -72,10 +71,10 @@ export function buildNodeObjects(
     mesh: THREE.InstancedMesh;
     trunks: THREE.InstancedMesh | null;
     items: NodeRec[];
-    lastScale: number[];
+    ratio: number[];
+    hidden: boolean[];
     origin: THREE.Vector3[];
     quat: THREE.Quaternion[];
-    y: number;
   }
   const layers: Layer[] = [];
   const matrix = new THREE.Matrix4();
@@ -94,48 +93,74 @@ export function buildNodeObjects(
     }
     const origin: THREE.Vector3[] = [];
     const quats: THREE.Quaternion[] = [];
-    const lastScale: number[] = [];
     items.forEach((n, i) => {
       const y = groundY(n.tileX, n.tileY) + yOffsets[kind];
       euler.set(0, (n.id % 628) / 100, 0);
       const q = new THREE.Quaternion().setFromEuler(euler);
       origin.push(new THREE.Vector3(n.x, y, n.y));
       quats.push(q);
-      lastScale.push(1);
       matrix.compose(origin[i], q, one);
       mesh.setMatrixAt(i, matrix);
       if (trunks) trunks.setMatrixAt(i, matrix);
     });
     group.add(mesh);
     if (trunks) group.add(trunks);
-    layers.push({ mesh, trunks, items, lastScale, origin, quat: quats, y: 0 });
+    layers.push({
+      mesh,
+      trunks,
+      items,
+      ratio: items.map(() => 1),
+      hidden: items.map(() => false),
+      origin,
+      quat: quats,
+    });
   }
+
+  const write = (layer: Layer, i: number): void => {
+    const s = layer.hidden[i] ? 0.0001 : Math.max(0.001, layer.ratio[i]);
+    matrix.compose(layer.origin[i], layer.quat[i], new THREE.Vector3(s, s, s));
+    layer.mesh.setMatrixAt(i, matrix);
+    if (layer.trunks) layer.trunks.setMatrixAt(i, matrix);
+  };
+
+  const refresh = (predicate: (layer: Layer, i: number) => boolean): void => {
+    for (const layer of layers) {
+      let dirty = false;
+      for (let i = 0; i < layer.items.length; i++) {
+        if (predicate(layer, i)) {
+          write(layer, i);
+          dirty = true;
+        }
+      }
+      if (dirty) {
+        layer.mesh.instanceMatrix.needsUpdate = true;
+        if (layer.trunks) layer.trunks.instanceMatrix.needsUpdate = true;
+      }
+    }
+  };
 
   return {
     group,
     update(updates: NodeRec[]): void {
-      const byId = new Map<number, number>();
+      const next = new Map<number, number>();
       for (const n of updates) {
-        const ratio = n.amount <= 0 ? 0 : Math.max(0.35, n.amount / Math.max(1, cap.get(n.id) ?? n.amount));
-        byId.set(n.id, ratio);
+        next.set(n.id, n.amount <= 0 ? 0 : Math.max(0.35, n.amount / Math.max(1, cap.get(n.id) ?? n.amount)));
       }
-      for (const layer of layers) {
-        let dirty = false;
-        layer.items.forEach((n, i) => {
-          const ratio = byId.get(n.id);
-          if (ratio === undefined || Math.abs(ratio - layer.lastScale[i]) < 0.004) return;
-          layer.lastScale[i] = ratio;
-          const s = Math.max(0.001, ratio);
-          matrix.compose(layer.origin[i], layer.quat[i], new THREE.Vector3(s, s, s));
-          layer.mesh.setMatrixAt(i, matrix);
-          if (layer.trunks) layer.trunks.setMatrixAt(i, matrix);
-          dirty = true;
-        });
-        if (dirty) {
-          layer.mesh.instanceMatrix.needsUpdate = true;
-          if (layer.trunks) layer.trunks.instanceMatrix.needsUpdate = true;
-        }
-      }
+      refresh((layer, i) => {
+        const r = next.get(layer.items[i].id);
+        if (r === undefined || Math.abs(r - layer.ratio[i]) < 0.004) return false;
+        layer.ratio[i] = r;
+        return true;
+      });
+    },
+    setFog(fog: FogView | null): void {
+      refresh((layer, i) => {
+        const n = layer.items[i];
+        const hidden = fog !== null && !fog.visible(n.tileX, n.tileY);
+        if (hidden === layer.hidden[i]) return false;
+        layer.hidden[i] = hidden;
+        return true;
+      });
     },
   };
 }

@@ -1,6 +1,17 @@
 import * as THREE from 'three';
 
-import type { BuildingDef, BuildingRec, UnitRec } from '../sim/bridge';
+import type { BuildingDef, BuildingRec } from '../sim/bridge';
+
+// RenderUnit is a display-ready unit: interpolated position, ground
+// height y and a vertical bob offset for the walking animation.
+export interface RenderUnit {
+  id: number;
+  owner: number;
+  x: number;
+  y: number;
+  yOff: number;
+  carried: number;
+}
 import { HEIGHT_SCALE, PALETTE, PLAYER_COLORS } from './palette';
 
 // Dynamic entities: villagers as owner-colored instanced bodies, buildings
@@ -11,7 +22,7 @@ const BUILDING_CAP = 256;
 
 export interface Actors {
   group: THREE.Group;
-  setUnits(units: UnitRec[]): void;
+  setUnits(units: RenderUnit[]): void;
   setBuildings(buildings: BuildingRec[], defs: Map<number, BuildingDef>): void;
   setSelection(ids: number[]): void;
   // screenPoint fills v with the projected position of entity id; false if gone.
@@ -64,12 +75,12 @@ export function buildActors(size: number, heights: Uint16Array): Actors {
 
   return {
     group,
-    setUnits(units: UnitRec[]): void {
+    setUnits(units: RenderUnit[]): void {
       unitPos.clear();
       const n = Math.min(units.length, UNIT_CAP);
       for (let i = 0; i < n; i++) {
         const u = units[i];
-        const p = new THREE.Vector3(u.x, heightAt(u.x, u.y), u.y);
+        const p = new THREE.Vector3(u.x, heightAt(u.x, u.y) + u.yOff, u.y);
         unitPos.set(u.id, p);
         const s = u.carried > 0 ? 1.15 : 1;
         matrix.compose(p, quat, scale.set(s, s, s));
