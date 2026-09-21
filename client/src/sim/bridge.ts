@@ -1,4 +1,46 @@
-import type { RawSim } from './loader';
+import type { BuildingDefJson, RawSim } from './loader';
+
+export interface UnitRec {
+  id: number;
+  owner: number;
+  kind: number;
+  state: number;
+  carriedKind: number;
+  carried: number;
+  x: number;
+  y: number;
+  target: number;
+}
+
+export interface NodeRec {
+  id: number;
+  kind: number;
+  amount: number;
+  x: number;
+  y: number;
+  tileX: number;
+  tileY: number;
+}
+
+export interface BuildingRec {
+  id: number;
+  def: number;
+  owner: number;
+  progress: number;
+  trainLeft: number;
+  trainReq: number;
+  tileX: number;
+  tileY: number;
+}
+
+export interface PlayerEcon {
+  active: boolean;
+  pop: number;
+  popCap: number;
+  res: number[];
+}
+
+export type BuildingDef = BuildingDefJson;
 
 // SimWorld is a typed handle on one simulation instance inside the wasm
 // module. All gameplay numbers come from the simulation; the bridge only
@@ -64,6 +106,84 @@ export class SimWorld {
       out.push({ x: Math.floor(packed / 65536), y: packed % 65536 });
     }
     return out;
+  }
+
+  // --- phase 3: dynamic state ---------------------------------------------
+
+  units(): UnitRec[] {
+    const raw = this.sim.unitsBlob(this.id);
+    const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    const out: UnitRec[] = [];
+    for (let o = 0; o + 20 <= raw.byteLength; o += 20) {
+      out.push({
+        id: v.getUint32(o, true),
+        owner: raw[o + 4],
+        kind: raw[o + 5],
+        state: raw[o + 6],
+        carriedKind: raw[o + 7],
+        x: v.getUint16(o + 8, true) / 16,
+        y: v.getUint16(o + 10, true) / 16,
+        target: v.getUint32(o + 12, true),
+        carried: v.getUint16(o + 16, true),
+      });
+    }
+    return out;
+  }
+
+  nodes(): NodeRec[] {
+    const raw = this.sim.nodesBlob(this.id);
+    const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    const out: NodeRec[] = [];
+    for (let o = 0; o + 16 <= raw.byteLength; o += 16) {
+      out.push({
+        id: v.getUint32(o, true),
+        kind: raw[o + 4],
+        amount: v.getUint16(o + 5, true),
+        x: v.getUint16(o + 7, true) / 16,
+        y: v.getUint16(o + 9, true) / 16,
+        tileX: v.getUint16(o + 11, true),
+        tileY: v.getUint16(o + 13, true),
+      });
+    }
+    return out;
+  }
+
+  buildings(): BuildingRec[] {
+    const raw = this.sim.buildingsBlob(this.id);
+    const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    const out: BuildingRec[] = [];
+    for (let o = 0; o + 16 <= raw.byteLength; o += 16) {
+      out.push({
+        id: v.getUint32(o, true),
+        def: v.getUint16(o + 4, true),
+        owner: raw[o + 6],
+        progress: v.getUint16(o + 7, true),
+        trainLeft: raw[o + 9],
+        trainReq: raw[o + 10],
+        tileX: v.getUint16(o + 11, true),
+        tileY: v.getUint16(o + 13, true),
+      });
+    }
+    return out;
+  }
+
+  economy(): PlayerEcon[] {
+    const raw = this.sim.economyBlob(this.id);
+    const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    const out: PlayerEcon[] = [];
+    for (let o = 0; o + 32 <= raw.byteLength; o += 32) {
+      out.push({
+        active: raw[o] !== 0,
+        pop: v.getUint16(o + 1, true),
+        popCap: v.getUint16(o + 3, true),
+        res: [0, 1, 2, 3, 4, 5].map((k) => v.getUint32(o + 5 + k * 4, true)),
+      });
+    }
+    return out;
+  }
+
+  defs(): BuildingDef[] {
+    return this.sim.defs(this.id);
   }
 }
 

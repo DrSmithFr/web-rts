@@ -17,3 +17,9 @@ export function t(key: MessageKey, vars?: Record<string, string | number>): stri
   }
   return text;
 }
+
+// tn is the dynamic-key variant used for composed identifiers such as
+// building.<key> or node.<kind>; unknown keys fall back to the raw key.
+export function tn(key: string, vars?: Record<string, string | number>): string {
+  return t(key as MessageKey, vars);
+}

@@ -17,6 +17,7 @@ import (
 
 	"rts/sim/fixed"
 	"rts/sim/hash"
+	"rts/sim/resource"
 	"rts/sim/terrain"
 )
 
@@ -41,17 +42,32 @@ const (
 	spawnLandMin = 25 // walkable tiles in the 5x5 spawn window (of 25)
 	spawnWindow  = 5
 
-	hashLabel = "rts.map/v1"
+	goldScatter = 90  // one gold node per N grass tiles (hash bucket)
+	oilScatter  = 120 // one oil node per N sand tiles (hidden until Modern)
+
+	berrySalt = 0x1f4a7c93e2b5d617
+	goldSalt  = 0x52aa1c3d7e99f011
+	oilSalt   = 0x0c7e1d5b3a8f6249
+
+	hashLabel = "rts.map/v2"
 )
 
 // ErrNoSpawns means the map does not contain enough separated land patches
 // for the requested number of players.
 var ErrNoSpawns = errors.New("worldgen: not enough land for requested players")
 
+// Node is a harvestable resource node placed by the generator.
+type Node struct {
+	X, Y   int32
+	Kind   resource.Kind
+	Amount int32
+}
+
 // Map is a generated world map.
 type Map struct {
 	grid   *terrain.Grid
 	spawns [][2]int
+	nodes  []Node
 	digest uint64
 }
 
@@ -60,6 +76,10 @@ func (m *Map) Grid() *terrain.Grid { return m.grid }
 
 // Spawns returns the player start positions in order.
 func (m *Map) Spawns() [][2]int { return m.spawns }
+
+// Nodes returns the harvestable nodes in deterministic (row-major, then
+// per-player berry rings) order.
+func (m *Map) Nodes() []Node { return m.nodes }
 
 // Hash returns the canonical map digest.
 func (m *Map) Hash() uint64 { return m.digest }
@@ -91,8 +111,10 @@ func Generate(seed uint64, size, players int) (*Map, error) {
 	for _, s := range spawns {
 		stampStart(g, s[0], s[1])
 	}
+	berries := stampBerries(g, spawns)
+	nodes := placeNodes(g, seed, berries)
 
-	m := &Map{grid: g, spawns: spawns}
+	m := &Map{grid: g, spawns: spawns, nodes: nodes}
 	m.digest = hashMap(m)
 	return m, nil
 }
@@ -289,7 +311,77 @@ func stampStart(g *terrain.Grid, x, y int) {
 	}
 }
 
-// hashMap digests the full map state: layout, terrain, heights and spawns.
+// scatter returns a well-mixed 64-bit hash per (seed, salt, tile), used
+// for sparse resource placement without materializing tables.
+func scatter(seed, salt uint64, x, y int64) uint64 {
+	h := mix64(seed ^ salt)
+	h = mix64(h ^ uint64(x)*0xff51afd7ed558ccd)
+	h = mix64(h ^ uint64(y)*0xc4ceb9fe1a85ec53)
+	return h
+}
+
+// stampBerries clears four berry spots around each spawn and returns their
+// positions. Offsets are tried in a fixed order so every player gets the
+// same starting pattern; water spots are skipped for the next candidate.
+func stampBerries(g *terrain.Grid, spawns [][2]int) [][2]int {
+	offsets := [][2]int{
+		{7, 0}, {-7, 0}, {0, 7}, {0, -7},
+		{7, 4}, {-7, 4}, {4, 7}, {-4, 7},
+		{7, -4}, {-7, -4}, {4, -7}, {-4, -7},
+		{9, 0}, {-9, 0}, {0, 9}, {0, -9},
+	}
+	var out [][2]int
+	for _, s := range spawns {
+		placed := 0
+		for _, o := range offsets {
+			if placed == 4 {
+				break
+			}
+			x, y := s[0]+o[0], s[1]+o[1]
+			if !g.InBounds(x, y) {
+				continue
+			}
+			if t := g.Tile(x, y); t == terrain.Shallow || t == terrain.Deep {
+				continue
+			}
+			g.SetTile(x, y, terrain.Grass)
+			out = append(out, [2]int{x, y})
+			placed++
+		}
+	}
+	return out
+}
+
+// placeNodes turns forest tiles into wood nodes, rock tiles into stone
+// nodes, sprinkles gold on grass and oil on sand by hash bucket, and adds
+// berry nodes at the stamped positions.
+func placeNodes(g *terrain.Grid, seed uint64, berries [][2]int) []Node {
+	var nodes []Node
+	for y := 0; y < g.Size(); y++ {
+		for x := 0; x < g.Size(); x++ {
+			switch g.Tile(x, y) {
+			case terrain.Forest:
+				nodes = append(nodes, Node{X: int32(x), Y: int32(y), Kind: resource.Wood, Amount: resource.TreeAmount})
+			case terrain.Rock:
+				nodes = append(nodes, Node{X: int32(x), Y: int32(y), Kind: resource.Stone, Amount: resource.StoneAmount})
+			case terrain.Grass:
+				if scatter(seed, goldSalt, int64(x), int64(y))%goldScatter == 0 {
+					nodes = append(nodes, Node{X: int32(x), Y: int32(y), Kind: resource.Gold, Amount: resource.GoldAmount})
+				}
+			case terrain.Sand:
+				if scatter(seed, oilSalt, int64(x), int64(y))%oilScatter == 0 {
+					nodes = append(nodes, Node{X: int32(x), Y: int32(y), Kind: resource.Oil, Amount: resource.OilAmount})
+				}
+			}
+		}
+	}
+	for _, b := range berries {
+		nodes = append(nodes, Node{X: int32(b[0]), Y: int32(b[1]), Kind: resource.Food, Amount: resource.BerryAmount})
+	}
+	return nodes
+}
+
+// hashMap digests the full map state: layout, terrain, heights, spawns and nodes.
 func hashMap(m *Map) uint64 {
 	h := hash.New()
 	h.WriteString(hashLabel)
@@ -299,6 +391,13 @@ func hashMap(m *Map) uint64 {
 	for _, s := range m.spawns {
 		h.WriteU32(uint32(s[0]))
 		h.WriteU32(uint32(s[1]))
+	}
+	h.WriteU32(uint32(len(m.nodes)))
+	for _, n := range m.nodes {
+		h.WriteU32(uint32(n.X))
+		h.WriteU32(uint32(n.Y))
+		h.WriteU32(uint32(n.Kind))
+		h.WriteU32(uint32(n.Amount))
 	}
 	for _, t := range m.grid.Tiles() {
 		h.WriteU32(uint32(t))

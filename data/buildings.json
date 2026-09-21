@@ -1,0 +1,40 @@
+{
+  "buildings": [
+    {
+      "id": 1,
+      "key": "hut",
+      "costWood": 50,
+      "costStone": 0,
+      "buildTicks": 60,
+      "popRoom": 5,
+      "size": 2,
+      "dropoff": false,
+      "trainFood": 0,
+      "trainTicks": 0
+    },
+    {
+      "id": 2,
+      "key": "campfire",
+      "costWood": 30,
+      "costStone": 0,
+      "buildTicks": 40,
+      "popRoom": 0,
+      "size": 1,
+      "dropoff": false,
+      "trainFood": 0,
+      "trainTicks": 0
+    },
+    {
+      "id": 3,
+      "key": "storehouse",
+      "costWood": 60,
+      "costStone": 0,
+      "buildTicks": 80,
+      "popRoom": 0,
+      "size": 2,
+      "dropoff": true,
+      "trainFood": 50,
+      "trainTicks": 20
+    }
+  ]
+}

@@ -56,6 +56,62 @@
         display: none;
         pointer-events: none;
       }
+      #resbar {
+        position: fixed;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 8px 16px;
+        background: rgba(10, 12, 18, 0.8);
+        border: 1px solid #2c3345;
+        border-radius: 6px;
+        font-size: 14px;
+        display: none;
+        gap: 18px;
+        user-select: none;
+      }
+      #resbar .k {
+        color: #8a93a6;
+      }
+      #panel {
+        position: fixed;
+        bottom: 12px;
+        right: 12px;
+        min-width: 220px;
+        padding: 10px 14px;
+        background: rgba(10, 12, 18, 0.85);
+        border: 1px solid #2c3345;
+        border-radius: 6px;
+        font-size: 13px;
+        line-height: 1.5;
+        display: none;
+        user-select: none;
+      }
+      #panel .dim {
+        color: #8a93a6;
+      }
+      #panel .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+      }
+      #panel button {
+        font: inherit;
+        color: #d7dce6;
+        background: #1d2433;
+        border: 1px solid #38425a;
+        border-radius: 4px;
+        padding: 4px 8px;
+        cursor: pointer;
+      }
+      #panel button:hover {
+        background: #29334a;
+      }
+      #panel button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
     </style>
   </head>
   <body>
@@ -72,6 +128,14 @@
     </div>
     <div id="hover"></div>
     <div id="selrect"></div>
+    <div id="resbar">
+      <span><span class="k">W</span> <span id="res-wood">0</span></span>
+      <span><span class="k">S</span> <span id="res-stone">0</span></span>
+      <span><span class="k">F</span> <span id="res-food">0</span></span>
+      <span><span class="k">G</span> <span id="res-gold">0</span></span>
+      <span><span class="k">pop</span> <span id="res-pop">0/0</span></span>
+    </div>
+    <div id="panel"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -13,6 +13,24 @@ export interface RawSim {
   mapHashHex(id: number): string;
   spawnCount(id: number): number;
   spawnAt(id: number, index: number): number;
+  unitsBlob(id: number): Uint8Array;
+  nodesBlob(id: number): Uint8Array;
+  buildingsBlob(id: number): Uint8Array;
+  economyBlob(id: number): Uint8Array;
+  defs(id: number): BuildingDefJson[];
+}
+
+export interface BuildingDefJson {
+  id: number;
+  key: string;
+  costWood: number;
+  costStone: number;
+  buildTicks: number;
+  popRoom: number;
+  size: number;
+  dropoff: boolean;
+  trainFood: number;
+  trainTicks: number;
 }
 
 declare global {
