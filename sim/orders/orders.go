@@ -4,13 +4,14 @@
 // and the TypeScript client encode/decode against.
 package orders
 
-// Gameplay order kinds (payload kinds; proto.KindNoop stays 0).
+// Gameplay order kinds (payload kinds; proto.KindNoop stays 0). They are
+// untyped so both proto.Kind and uint16 contexts accept them.
 const (
-	Move   uint16 = 1
-	Gather uint16 = 2
-	Build  uint16 = 3
-	Stop   uint16 = 4
-	Train  uint16 = 5
+	Move   = 1
+	Gather = 2
+	Build  = 3
+	Stop   = 4
+	Train  = 5
 )
 
 // MoveItem is one unit destination in a group move.
