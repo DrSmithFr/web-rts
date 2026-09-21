@@ -1,4 +1,10 @@
-import type { BuildingDefJson, RawSim, UnitDefJson } from './loader';
+import type {
+  BuildingDefJson,
+  EraDefJson,
+  RawSim,
+  TechDefJson,
+  UnitDefJson,
+} from './loader';
 
 export interface UnitRec {
   id: number;
@@ -42,10 +48,28 @@ export interface PlayerEcon {
   pop: number;
   popCap: number;
   res: number[];
+  era: number;
+  ageTarget: number;
+  ageLeft: number;
+  techCur: number;
+  techLeft: number;
+}
+
+export interface Victory {
+  winner: number;
+  kind: number;
+}
+
+export interface RelicRec {
+  x: number;
+  y: number;
+  owner: number;
 }
 
 export type BuildingDef = BuildingDefJson;
 export type UnitDef = UnitDefJson;
+export type EraDef = EraDefJson;
+export type TechDef = TechDefJson;
 
 // SimWorld is a typed handle on one simulation instance inside the wasm
 // module. All gameplay numbers come from the simulation; the bridge only
@@ -180,13 +204,44 @@ export class SimWorld {
     const raw = this.sim.economyBlob(this.id);
     const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     const out: PlayerEcon[] = [];
-    for (let o = 0; o + 32 <= raw.byteLength; o += 32) {
+    for (let o = 0; o + 40 <= raw.byteLength; o += 40) {
       out.push({
         active: raw[o] !== 0,
         pop: v.getUint16(o + 1, true),
         popCap: v.getUint16(o + 3, true),
         res: [0, 1, 2, 3, 4, 5].map((k) => v.getUint32(o + 5 + k * 4, true)),
+        era: raw[o + 32],
+        ageTarget: raw[o + 33],
+        ageLeft: v.getUint16(o + 34, true),
+        techCur: v.getUint16(o + 36, true),
+        techLeft: v.getUint16(o + 38, true),
       });
+    }
+    return out;
+  }
+
+  eras(): EraDef[] {
+    return this.sim.eras(this.id);
+  }
+
+  techDefs(): TechDef[] {
+    return this.sim.techDefs(this.id);
+  }
+
+  playerTechs(player: number): number[] {
+    return this.sim.playerTechs(this.id, player);
+  }
+
+  victory(): Victory {
+    return this.sim.victory(this.id);
+  }
+
+  relics(): RelicRec[] {
+    const raw = this.sim.relicsBlob(this.id);
+    const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    const out: RelicRec[] = [];
+    for (let o = 0; o + 5 <= raw.byteLength; o += 5) {
+      out.push({ x: v.getUint16(o, true), y: v.getUint16(o + 2, true), owner: raw[o + 4] });
     }
     return out;
   }

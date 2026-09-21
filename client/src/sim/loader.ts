@@ -19,7 +19,33 @@ export interface RawSim {
   economyBlob(id: number): Uint8Array;
   defs(id: number): BuildingDefJson[];
   unitDefs(id: number): UnitDefJson[];
+  eras(id: number): EraDefJson[];
+  techDefs(id: number): TechDefJson[];
+  playerTechs(id: number, player: number): number[];
+  victory(id: number): { winner: number; kind: number };
+  relicsBlob(id: number): Uint8Array;
   fogBlob(id: number, player: number): Uint8Array;
+}
+
+export interface EraDefJson {
+  id: number;
+  key: string;
+  costFood: number;
+  costGold: number;
+  reqBuilding: number;
+  ageTicks: number;
+}
+
+export interface TechDefJson {
+  id: number;
+  key: string;
+  era: number;
+  building: number;
+  costFood: number;
+  costWood: number;
+  costGold: number;
+  ticks: number;
+  requires: number[];
 }
 
 export interface BuildingDefJson {
@@ -33,6 +59,7 @@ export interface BuildingDefJson {
   dropoff: boolean;
   trainFood: number;
   trainTicks: number;
+  minEra: number;
 }
 
 export interface UnitBonusJson {

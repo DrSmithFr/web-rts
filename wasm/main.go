@@ -32,17 +32,30 @@
 //	                          owner u8, pad u8, progress u16, trainCur u16,
 //	                          trainLeft u16, trainReq u16, tileX u16,
 //	                          tileY u16, queue u16 * 5 (LE)
-//	economyBlob(id)       -> Uint8Array, 32-byte records per player slot:
-//	                          active u8, pop u16, popCap u16, res u32 * 6
+//	economyBlob(id)       -> Uint8Array, 40-byte records per player slot:
+//	                          active u8, pop u16, popCap u16, res u32 * 6,
+//	                          era u8, ageTarget u8, ageLeft u16,
+//	                          techCur u16, techLeft u16
 //	fogBlob(id, player)   -> Uint8Array of 2-bit fog states, row-major
 //	defs(id)              -> array of building defs {id,key,costWood,
 //	                          costStone,buildTicks,popRoom,size,dropoff,
-//	                          trainFood,trainTicks}
+//	                          trainFood,trainTicks,minEra}
 //	unitDefs(id)          -> array of unit defs {id,key,class,hp,speed16,
 //	                          vision,damage,damageType,armorPierce,
 //	                          armorCrush,range16,rate,costFood,costWood,
 //	                          costGold,popCost,trainBy,trainTicks,
 //	                          corpseFood,flee,minEra,bonuses:[{class,bonus}]}
+//	eras(id)              -> array of era defs {id,key,costFood,costGold,
+//	                          reqBuilding,ageTicks}
+//	techDefs(id)          -> array of tech defs {id,key,era,building,
+//	                          costFood,costWood,costGold,requires:[ids],
+//	                          ticks}
+//	playerTechs(id, p)    -> array of owned tech ids for player p
+//	victory(id)           -> {winner,kind}; winner 255 while the game is
+//	                          open, kind 0 none / 1 conquest / 2 wonder /
+//	                          3 relic
+//	relicsBlob(id)        -> Uint8Array, 5-byte records: x u16, y u16,
+//	                          owner u8 (255 = unclaimed)
 //	version()             -> bridge version string
 //
 // Invalid world ids panic, which surfaces as a JavaScript exception; that
@@ -256,9 +269,9 @@ func buildingsBlob(this js.Value, args []js.Value) any {
 func economyBlob(this js.Value, args []js.Value) any {
 	w := mustID(args).world
 	ps := w.Players()
-	return blob(core.MaxPlayers*32, func(buf []byte) {
+	return blob(core.MaxPlayers*40, func(buf []byte) {
 		for i := 0; i < core.MaxPlayers; i++ {
-			off := i * 32
+			off := i * 40
 			if ps[i].Active {
 				buf[off] = 1
 			}
@@ -267,8 +280,93 @@ func economyBlob(this js.Value, args []js.Value) any {
 			for k := 0; k < 6; k++ {
 				binary.LittleEndian.PutUint32(buf[off+5+k*4:], uint32(ps[i].Res[k]))
 			}
+			buf[off+32] = ps[i].Era
+			buf[off+33] = ps[i].AgeTarget
+			binary.LittleEndian.PutUint16(buf[off+34:], u16v(ps[i].AgeLeft))
+			binary.LittleEndian.PutUint16(buf[off+36:], ps[i].TechCur)
+			binary.LittleEndian.PutUint16(buf[off+38:], u16v(ps[i].TechLeft))
 		}
 	})
+}
+
+func relicsBlob(this js.Value, args []js.Value) any {
+	w := mustID(args).world
+	rels := w.Relics()
+	return blob(len(rels)*5, func(buf []byte) {
+		for i, r := range rels {
+			off := i * 5
+			binary.LittleEndian.PutUint16(buf[off:], uint16(r.X))
+			binary.LittleEndian.PutUint16(buf[off+2:], uint16(r.Y))
+			buf[off+4] = r.Owner
+		}
+	})
+}
+
+func victory(this js.Value, args []js.Value) any {
+	w := mustID(args).world
+	owner, kind := w.Winner()
+	o := js.Global().Get("Object").New()
+	o.Set("winner", int(owner))
+	o.Set("kind", int(kind))
+	return o
+}
+
+func playerTechs(this js.Value, args []js.Value) any {
+	w := mustID(args)
+	if len(args) < 2 {
+		panic("RTSSim: playerTechs requires (id, player)")
+	}
+	ps := w.world.Players()
+	player := uint8(args[1].Int())
+	arr := js.Global().Get("Array").New()
+	if player < core.MaxPlayers {
+		bits := ps[player].Techs
+		for i, t := range w.world.TechDefs().Defs() {
+			if bits&(uint64(1)<<uint(i)) != 0 {
+				arr.Call("push", int(t.ID))
+			}
+		}
+	}
+	return arr
+}
+
+func eras(this js.Value, args []js.Value) any {
+	w := mustID(args)
+	arr := js.Global().Get("Array").New()
+	for _, d := range w.world.EraDefs().Defs() {
+		o := js.Global().Get("Object").New()
+		o.Set("id", int(d.ID))
+		o.Set("key", d.Key)
+		o.Set("costFood", d.CostFood)
+		o.Set("costGold", d.CostGold)
+		o.Set("reqBuilding", d.ReqBuilding)
+		o.Set("ageTicks", d.AgeTicks)
+		arr.Call("push", o)
+	}
+	return arr
+}
+
+func techDefs(this js.Value, args []js.Value) any {
+	w := mustID(args)
+	arr := js.Global().Get("Array").New()
+	for _, d := range w.world.TechDefs().Defs() {
+		o := js.Global().Get("Object").New()
+		o.Set("id", int(d.ID))
+		o.Set("key", d.Key)
+		o.Set("era", int(d.Era))
+		o.Set("building", d.Building)
+		o.Set("costFood", d.CostFood)
+		o.Set("costWood", d.CostWood)
+		o.Set("costGold", d.CostGold)
+		o.Set("ticks", d.Ticks)
+		reqs := js.Global().Get("Array").New()
+		for _, r := range d.Requires {
+			reqs.Call("push", int(r))
+		}
+		o.Set("requires", reqs)
+		arr.Call("push", o)
+	}
+	return arr
 }
 
 func fogBlob(this js.Value, args []js.Value) any {
@@ -297,6 +395,7 @@ func defs(this js.Value, args []js.Value) any {
 		o.Set("dropoff", d.Dropoff)
 		o.Set("trainFood", d.TrainFood)
 		o.Set("trainTicks", d.TrainTicks)
+		o.Set("minEra", d.MinEra)
 		arr.Call("push", o)
 	}
 	return arr
@@ -360,6 +459,11 @@ func main() {
 	obj.Set("economyBlob", js.FuncOf(economyBlob))
 	obj.Set("defs", js.FuncOf(defs))
 	obj.Set("unitDefs", js.FuncOf(unitDefs))
+	obj.Set("eras", js.FuncOf(eras))
+	obj.Set("techDefs", js.FuncOf(techDefs))
+	obj.Set("playerTechs", js.FuncOf(playerTechs))
+	obj.Set("victory", js.FuncOf(victory))
+	obj.Set("relicsBlob", js.FuncOf(relicsBlob))
 	obj.Set("fogBlob", js.FuncOf(fogBlob))
 	obj.Set("version", js.FuncOf(version))
 	js.Global().Set("RTSSim", obj)

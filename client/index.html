@@ -129,6 +129,20 @@
         border-radius: 4px;
         cursor: crosshair;
       }
+      #victory {
+        position: fixed;
+        top: 42%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        padding: 18px 34px;
+        background: rgba(10, 12, 18, 0.92);
+        border: 1px solid #caa84f;
+        border-radius: 8px;
+        font-size: 22px;
+        color: #f2e3b0;
+        display: none;
+        user-select: none;
+      }
     </style>
   </head>
   <body>
@@ -151,8 +165,11 @@
       <span><span class="k">F</span> <span id="res-food">0</span></span>
       <span><span class="k">G</span> <span id="res-gold">0</span></span>
       <span><span class="k">pop</span> <span id="res-pop">0/0</span></span>
+      <span><span class="k">era</span> <span id="res-era">—</span></span>
+      <span><span class="k">relics</span> <span id="res-relics">0</span></span>
     </div>
     <div id="panel"></div>
+    <div id="victory"></div>
     <div id="minimapbox">
       <canvas id="minimap" width="168" height="168"></canvas>
     </div>

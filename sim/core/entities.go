@@ -5,6 +5,7 @@ import (
 	"rts/sim/fixed"
 	"rts/sim/fog"
 	"rts/sim/resource"
+	"rts/sim/tech"
 )
 
 // Unit kinds select the body shape on the client.
@@ -17,25 +18,47 @@ const (
 // Unit states. Workers cycle idle/move/gather/return/build; military use
 // attack and patrol; animals wander and flee.
 const (
-	UnitIdle    uint8 = 0
-	UnitMove    uint8 = 1
-	UnitGather  uint8 = 2
-	UnitReturn  uint8 = 3
-	UnitBuild   uint8 = 4
-	UnitAttack  uint8 = 5
-	UnitPatrol  uint8 = 6
-	UnitWander  uint8 = 7
-	UnitFlee    uint8 = 8
+	UnitIdle   uint8 = 0
+	UnitMove   uint8 = 1
+	UnitGather uint8 = 2
+	UnitReturn uint8 = 3
+	UnitBuild  uint8 = 4
+	UnitAttack uint8 = 5
+	UnitPatrol uint8 = 6
+	UnitWander uint8 = 7
+	UnitFlee   uint8 = 8
 )
 
 // Unit def ids fixed by data/units.json order.
 const (
-	DefVillager uint16 = 1
-	DefLancer   uint16 = 2
-	DefArcher   uint16 = 3
-	DefScout    uint16 = 4
-	DefDeer     uint16 = 5
-	DefBoar     uint16 = 6
+	DefVillager    uint16 = 1
+	DefLancer      uint16 = 2
+	DefArcher      uint16 = 3
+	DefScout       uint16 = 4
+	DefDeer        uint16 = 5
+	DefBoar        uint16 = 6
+	DefKnight      uint16 = 7
+	DefCrossbowman uint16 = 8
+)
+
+// Building def ids fixed by data/buildings.json order.
+const (
+	BldHut        uint16 = 1
+	BldCampfire   uint16 = 2
+	BldStorehouse uint16 = 3
+	BldBarracks   uint16 = 4
+	BldMarket     uint16 = 5
+	BldForge      uint16 = 6
+	BldBank       uint16 = 7
+	BldWonder     uint16 = 8
+)
+
+// WinnerKind values for the game-over banner.
+const (
+	WinnerNone     uint8 = 0
+	WinnerConquest uint8 = 1
+	WinnerWonder   uint8 = 2
+	WinnerRelic    uint8 = 3
 )
 
 // OwnerNeutral marks wild animals; not an index into the player table.
@@ -83,15 +106,33 @@ const (
 
 	// MaxFieldSpan caps one window axis.
 	MaxFieldSpan int32 = 192
+
+	// RelicCount is the number of map relics (mirrors worldgen).
+	RelicCount = 5
+
+	// WonderGoalTicks is how long a completed Wonder must stand before
+	// its owner wins (10 in-game minutes at 20 Hz).
+	WonderGoalTicks int32 = 12000
+
+	// RelicGoalTicks is how long one player must hold every relic before
+	// winning (10 in-game minutes at 20 Hz).
+	RelicGoalTicks int32 = 12000
+
+	// EliminationGrace disables conquest checks for the opening ticks so
+	// nobody wins while units are still spawning.
+	EliminationGrace uint32 = 200
+
+	// MaxTechQueue bounds queued research per player.
+	MaxTechQueue int32 = 4
 )
 
 // Unit is a movable actor payload (worker, soldier or animal).
 type Unit struct {
-	Kind  uint8
-	DefID uint16
-	Owner uint8
-	State uint8
-	X, Y  fixed.F16
+	Kind   uint8
+	DefID  uint16
+	Owner  uint8
+	State  uint8
+	X, Y   fixed.F16
 	TX, TY fixed.F16
 	// PatrolX/Y is the other end of a patrol segment.
 	PatrolX, PatrolY fixed.F16
@@ -136,11 +177,38 @@ type Building struct {
 	HP         int32
 }
 
-// Player is one player's economy state.
+// Player is one player's economy and progress state. Mods is derived
+// from Techs (recomputed when a tech completes), never hashed directly.
 type Player struct {
 	Active bool
 	Res    [resource.Count]int32
 	Pop    int32
+
+	// Era ladder: AgeLeft counts down while AgeTarget is being reached.
+	Era       uint8
+	AgeTarget uint8
+	AgeLeft   int32
+
+	// Tech state: Techs holds one bit per table entry; TechCur/TechLeft
+	// track the running research and TechQueue[:TechReq] the backlog.
+	Techs     uint64
+	TechCur   uint16
+	TechLeft  int32
+	TechQueue [MaxTechQueue]uint16
+	TechReq   int32
+	Mods      tech.Mods
+
+	// Victory bookkeeping (recomputed each progress tick).
+	Relics      int32
+	RelicTicks  int32
+	WonderTicks int32
+}
+
+// Relic is one map relic; Owner is OwnerNeutral until a military unit
+// stands on its tile.
+type Relic struct {
+	X, Y  int32
+	Owner uint8
 }
 
 // FogState returns the raw fog state (0 unexplored, 1 explored, 2

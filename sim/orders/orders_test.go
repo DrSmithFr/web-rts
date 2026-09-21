@@ -81,6 +81,10 @@ func encodeArgs(t *testing.T, kind, args string) []byte {
 		xyPart := args[len(idsxy)+1:]
 		xs, ys, _ := strings.Cut(xyPart, ",")
 		return PatrolPayload(ids, u16(t, xs), u16(t, ys))
+	case "era":
+		return AgeUpPayload(uint8(u16(t, args)))
+	case "research":
+		return ResearchPayload(u16(t, args))
 	case "move-group":
 		idsxy, _, _ := strings.Cut(args, ":")
 		var ids []uint32
@@ -170,6 +174,14 @@ func decodeArgs(t *testing.T, kind, args string, raw []byte) {
 		xs, ys, _ := strings.Cut(xyPart, ",")
 		if r.U16() != u16(t, xs) || r.U16() != u16(t, ys) {
 			t.Error("patrol coords mismatch")
+		}
+	case "era":
+		if uint32(r.Uvarint()) != u32(t, args) {
+			t.Error("era mismatch")
+		}
+	case "research":
+		if uint32(r.Uvarint()) != u32(t, args) {
+			t.Error("research mismatch")
 		}
 	case "move-group":
 		idsxy, _, _ := strings.Cut(args, ":")

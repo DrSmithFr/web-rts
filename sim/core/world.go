@@ -16,19 +16,21 @@ import (
 
 	"rts/sim/building"
 	"rts/sim/entity"
+	"rts/sim/era"
 	"rts/sim/fog"
 	"rts/sim/hash"
 	"rts/sim/orders"
 	"rts/sim/path"
 	"rts/sim/proto"
 	"rts/sim/rng"
+	"rts/sim/tech"
 	"rts/sim/units"
 	"rts/sim/worldgen"
 )
 
 const (
 	// WorldVersion bumps whenever the hash layout changes.
-	WorldVersion uint64 = 5
+	WorldVersion uint64 = 6
 
 	// HashPeriodTicks is how often peers exchange state hashes on the
 	// wire (and how often replays checkpoint).
@@ -37,26 +39,31 @@ const (
 	// MaxPlayers is the fixed player table size.
 	MaxPlayers = 8
 
-	hashLabel = "rts.world/v5"
+	hashLabel = "rts.world/v6"
 )
 
 // World is the full simulation state.
 type World struct {
-	seed      uint64
-	gameMap   *worldgen.Map
-	tick      uint32
-	streams   rng.Streams
-	applied   uint64
-	rejected  uint64
-	bdefs     *building.Table
-	udefs     *units.Table
-	players   [MaxPlayers]Player
-	units     *entity.Store[Unit]
-	nodes     *entity.Store[Node]
-	buildings *entity.Store[Building]
-	fields    *entity.Store[path.Field]
-	occupied  []bool
-	fogs      [MaxPlayers]*fog.Grid
+	seed       uint64
+	gameMap    *worldgen.Map
+	tick       uint32
+	streams    rng.Streams
+	applied    uint64
+	rejected   uint64
+	bdefs      *building.Table
+	udefs      *units.Table
+	edefs      *era.Table
+	tdefs      *tech.Table
+	players    [MaxPlayers]Player
+	relics     [RelicCount]Relic
+	winner     uint8
+	winnerKind uint8
+	units      *entity.Store[Unit]
+	nodes      *entity.Store[Node]
+	buildings  *entity.Store[Building]
+	fields     *entity.Store[path.Field]
+	occupied   []bool
+	fogs       [MaxPlayers]*fog.Grid
 }
 
 // NewWorld creates the default-sized deterministic world for one seed.
@@ -89,11 +96,18 @@ func newWorld(seed uint64, m *worldgen.Map) *World {
 		streams:   rng.NewStreams(seed),
 		bdefs:     building.MustLoad(),
 		udefs:     units.MustLoad(),
+		edefs:     era.MustLoad(),
+		tdefs:     tech.MustLoad(),
+		winner:    OwnerNeutral,
 		units:     entity.New[Unit](),
 		nodes:     entity.New[Node](),
 		buildings: entity.New[Building](),
 		fields:    entity.New[path.Field](),
 		occupied:  make([]bool, size*size),
+	}
+	mr := m.Relics()
+	for i := range w.relics {
+		w.relics[i] = Relic{X: mr[i][0], Y: mr[i][1], Owner: OwnerNeutral}
 	}
 	for i := 0; i < MaxPlayers; i++ {
 		w.fogs[i] = fog.New(size)
@@ -123,6 +137,18 @@ func (w *World) BuildingDefs() *building.Table { return w.bdefs }
 
 // UnitDefs returns the loaded unit balance table.
 func (w *World) UnitDefs() *units.Table { return w.udefs }
+
+// EraDefs returns the loaded era ladder.
+func (w *World) EraDefs() *era.Table { return w.edefs }
+
+// TechDefs returns the loaded technology table.
+func (w *World) TechDefs() *tech.Table { return w.tdefs }
+
+// Winner returns the game-over owner and kind (WinnerNone while open).
+func (w *World) Winner() (uint8, uint8) { return w.winner, w.winnerKind }
+
+// Relics returns the current relic placements.
+func (w *World) Relics() [RelicCount]Relic { return w.relics }
 
 // PopCap returns the population cap for a player.
 func (w *World) PopCap(owner uint8) int32 { return w.popCap(owner) }
@@ -168,6 +194,10 @@ func (w *World) Step(due []proto.Order) {
 			ok = w.applyAttack(o.Player, o.Payload)
 		case orders.Patrol:
 			ok = w.applyPatrol(o.Player, o.Payload)
+		case orders.AgeUp:
+			ok = w.applyAgeUp(o.Player, o.Payload)
+		case orders.Research:
+			ok = w.applyResearch(o.Player, o.Payload)
 		default:
 			w.rejected++
 			continue
@@ -181,6 +211,7 @@ func (w *World) Step(due []proto.Order) {
 	w.updateUnits()
 	w.combatPhase()
 	w.updateBuildings()
+	w.progressPhase()
 	w.updateVision()
 	for d := rng.Domain(0); d < rng.DomainCount; d++ {
 		w.streams.Next(d)
@@ -209,10 +240,30 @@ func (w *World) Hash() uint64 {
 			h.WriteU64(uint64(int64(p.Res[k])))
 		}
 		h.WriteU64(uint64(int64(p.Pop)))
+		h.WriteU32(uint32(p.Era))
+		h.WriteU32(uint32(p.AgeTarget))
+		h.WriteU64(uint64(int64(p.AgeLeft)))
+		h.WriteU64(p.Techs)
+		h.WriteU32(uint32(p.TechCur))
+		h.WriteU64(uint64(int64(p.TechLeft)))
+		h.WriteU32(uint32(p.TechReq))
+		for i := int32(0); i < p.TechReq && i < MaxTechQueue; i++ {
+			h.WriteU32(uint32(p.TechQueue[i]))
+		}
+		h.WriteU64(uint64(int64(p.Relics)))
+		h.WriteU64(uint64(int64(p.RelicTicks)))
+		h.WriteU64(uint64(int64(p.WonderTicks)))
 		if p.Active {
 			w.fogs[i].AppendState(h, "rts.fog/v1")
 		}
 	}
+	for i := 0; i < RelicCount; i++ {
+		h.WriteU32(uint32(w.relics[i].X))
+		h.WriteU32(uint32(w.relics[i].Y))
+		h.WriteU32(uint32(w.relics[i].Owner))
+	}
+	h.WriteU32(uint32(w.winner))
+	h.WriteU32(uint32(w.winnerKind))
 	h.WriteU32(uint32(w.units.Len()))
 	w.units.Each(func(id entity.ID, u *Unit) {
 		h.WriteU32(uint32(id))

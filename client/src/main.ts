@@ -6,6 +6,7 @@ import {
   type BuildingDef,
   type BuildingRec,
   type NodeRec,
+  type RelicRec,
   type UnitDef,
   type UnitRec,
 } from './sim/bridge';
@@ -14,9 +15,11 @@ import {
   OrderKind,
   attackPayload,
   buildPayload,
+  eraPayload,
   gatherPayload,
   moveGroupPayload,
   patrolPayload,
+  researchPayload,
   stopPayload,
   trainPayload,
 } from './sim/ordercodec';
@@ -67,7 +70,10 @@ const resEls = {
   food: document.querySelector<HTMLSpanElement>('#res-food')!,
   gold: document.querySelector<HTMLSpanElement>('#res-gold')!,
   pop: document.querySelector<HTMLSpanElement>('#res-pop')!,
+  era: document.querySelector<HTMLSpanElement>('#res-era')!,
+  relics: document.querySelector<HTMLSpanElement>('#res-relics')!,
 };
+const victoryEl = document.querySelector<HTMLDivElement>('#victory')!;
 const canvas = document.querySelector<HTMLCanvasElement>('#gl')!;
 
 statusEl.textContent = t('hud.status.loading');
@@ -101,6 +107,9 @@ try {
   const defById = new Map<number, BuildingDef>(defs.map((d) => [d.id, d]));
   const udefs = world.unitDefs();
   const udefById = new Map<number, UnitDef>(udefs.map((d) => [d.id, d]));
+  const eraDefs = world.eras();
+  const techDefs = world.techDefs();
+  const techById = new Map(techDefs.map((d) => [d.id, d]));
   const nodeByTile = new Map<number, NodeRec>();
   const refreshNodeIndex = (): void => {
     nodeByTile.clear();
@@ -130,6 +139,8 @@ try {
 
   let units: UnitRec[] = [];
   let buildings: BuildingRec[] = [];
+  let relics: RelicRec[] = world.relics();
+  let ownedTechs = new Set<number>(world.playerTechs(LOCAL_PLAYER));
   const selection = new Selection();
   let placing: BuildingDef | null = null;
   let affordable = false;
@@ -271,6 +282,14 @@ try {
     world.order(LOCAL_PLAYER, OrderKind.Train, trainPayload(buildingId, unitDef));
   }
 
+  function issueAgeUp(era: number): void {
+    world.order(LOCAL_PLAYER, OrderKind.AgeUp, eraPayload(era));
+  }
+
+  function issueResearch(tech: number): void {
+    world.order(LOCAL_PLAYER, OrderKind.Research, researchPayload(tech));
+  }
+
   function issueStop(): void {
     const ids = selection.toArray();
     if (ids.length === 0) return;
@@ -349,6 +368,24 @@ try {
     );
   }
 
+  function techCostLabel(td: { costFood: number; costWood: number; costGold: number }): string {
+    const parts: string[] = [];
+    if (td.costFood > 0) parts.push(`${td.costFood}f`);
+    if (td.costWood > 0) parts.push(`${td.costWood}w`);
+    if (td.costGold > 0) parts.push(`${td.costGold}g`);
+    return parts.join(' ');
+  }
+
+  function researchAffordable(td: { costFood: number; costWood: number; costGold: number }): boolean {
+    const p = economy[LOCAL_PLAYER];
+    return (
+      p !== undefined &&
+      p.res[3] >= td.costFood &&
+      p.res[1] >= td.costWood &&
+      p.res[4] >= td.costGold
+    );
+  }
+
   function renderPanel(): void {
     const villagers = selectedVillagers().length;
     const soldiers = selectedUnits().filter(
@@ -366,6 +403,9 @@ try {
     panelEl.style.display = 'block';
     panelEl.textContent = '';
 
+    const pl = economy[LOCAL_PLAYER];
+    const era = pl ? pl.era : 0;
+
     if (villagers > 0) {
       const title = document.createElement('div');
       title.textContent = t('panel.villagers', { count: villagers });
@@ -374,6 +414,7 @@ try {
       const row = document.createElement('div');
       row.className = 'row';
       for (const def of defs) {
+        if (def.minEra > era) continue;
         const btn = document.createElement('button');
         btn.textContent = `${tn(`building.${def.key}`)} · ${costLabel(def)}`;
         btn.disabled = !canAfford(def);
@@ -452,6 +493,67 @@ try {
         row.appendChild(btn);
       }
       panelEl.appendChild(row);
+    }
+
+    // research buttons for every selected tech building
+    for (const b of selBuildings) {
+      if (b.progress > 0) continue;
+      const techs = techDefs.filter((td) => td.building === b.def && !ownedTechs.has(td.id));
+      if (techs.length === 0) continue;
+      const row = document.createElement('div');
+      row.className = 'row';
+      for (const td of techs) {
+        const reqsOk = td.requires.every((r) => ownedTechs.has(r));
+        const btn = document.createElement('button');
+        btn.textContent = `${tn(`tech.${td.key}`)} · ${techCostLabel(td)}`;
+        btn.disabled =
+          !reqsOk ||
+          td.era > era ||
+          pl === undefined ||
+          !researchAffordable(td) ||
+          (pl.techCur !== 0 && pl.techCur !== td.id);
+        btn.onclick = () => issueResearch(td.id);
+        row.appendChild(btn);
+      }
+      panelEl.appendChild(row);
+    }
+
+    // current research progress
+    if (pl && pl.techCur !== 0) {
+      const td = techById.get(pl.techCur);
+      if (td) {
+        const pct = Math.round(100 * (1 - pl.techLeft / td.ticks));
+        const line = document.createElement('div');
+        line.className = 'dim';
+        line.textContent = `${tn(`tech.${td.key}`)} · ${t('panel.researching', { pct })}`;
+        panelEl.appendChild(line);
+      }
+    }
+
+    // age up button
+    if (pl && era < 4) {
+      const next = eraDefs[era + 1];
+      if (pl.ageLeft > 0) {
+        const pct = Math.round(100 * (1 - pl.ageLeft / next.ageTicks));
+        const line = document.createElement('div');
+        line.textContent = `${t('panel.aging', { era: tn(`era.${next.key}`) })} · ${pct}%`;
+        panelEl.appendChild(line);
+      } else {
+        const req = defById.get(next.reqBuilding);
+        const hasReq = buildings.some(
+          (b) => b.owner === LOCAL_PLAYER && b.def === next.reqBuilding && b.progress === 0,
+        );
+        const affordable = pl.res[3] >= next.costFood && pl.res[4] >= next.costGold;
+        const btn = document.createElement('button');
+        btn.textContent = `${t('panel.ageup', { era: tn(`era.${next.key}`) })} · ${next.costFood}f ${next.costGold}g`;
+        btn.disabled = !hasReq || !affordable;
+        btn.title = req && !hasReq ? tn(`building.${req.key}`) : '';
+        btn.onclick = () => issueAgeUp(era + 1);
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.appendChild(btn);
+        panelEl.appendChild(row);
+      }
     }
   }
 
@@ -667,6 +769,9 @@ try {
     resEls.food.textContent = String(p.res[3]);
     resEls.gold.textContent = String(p.res[4]);
     resEls.pop.textContent = `${p.pop}/${p.popCap}`;
+    const ed = eraDefs[p.era];
+    resEls.era.textContent = ed ? tn(`era.${ed.key}`) : String(p.era);
+    resEls.relics.textContent = String(relics.filter((r) => r.owner === LOCAL_PLAYER).length);
   }
 
   // --- main loop ----------------------------------------------------------
@@ -734,8 +839,19 @@ try {
         nodesObj.update(nodes);
         refreshNodeIndex();
         economy = world.economy();
+        relics = world.relics();
+        ownedTechs = new Set(world.playerTechs(LOCAL_PLAYER));
         renderHud();
         renderPanel();
+        const vic = world.victory();
+        if (vic.winner !== 255) {
+          const kinds = { 1: 'victory.1', 2: 'victory.2', 3: 'victory.3' } as const;
+          victoryEl.style.display = 'block';
+          victoryEl.textContent = t('victory.text', {
+            player: vic.winner + 1,
+            kind: t(kinds[vic.kind as 1 | 2 | 3] ?? 'victory.1'),
+          });
+        }
       }
       if (tick !== lastFogTick) {
         lastFogTick = tick;
@@ -761,7 +877,7 @@ try {
         x: rtsCam.target.x,
         z: rtsCam.target.z,
         view: Math.min(size, rtsCam.dist * 1.2),
-      });
+      }, relics);
       renderer.render(scene, camera);
 
       tickEl.textContent = String(tick);

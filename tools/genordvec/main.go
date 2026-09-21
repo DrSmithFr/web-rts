@@ -33,6 +33,10 @@ func main() {
 		{"move-group", "7;8;9:112,128", hexOf(orders.MoveGroupPayload([]uint32{7, 8, 9}, 112, 128))},
 		{"attack", "7;8:65537", hexOf(orders.AttackPayload([]uint32{7, 8}, 65537))},
 		{"patrol", "7;8:96,200", hexOf(orders.PatrolPayload([]uint32{7, 8}, 96, 200))},
+		{"era", "1", hexOf(orders.AgeUpPayload(1))},
+		{"era", "4", hexOf(orders.AgeUpPayload(4))},
+		{"research", "1", hexOf(orders.ResearchPayload(1))},
+		{"research", "61012", hexOf(orders.ResearchPayload(61012))},
 		{"move", "", hexOf(orders.MovePayload(nil))},
 	}
 	for _, v := range vecs {

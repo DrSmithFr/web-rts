@@ -23,6 +23,7 @@ type Def struct {
 	Dropoff    bool   `json:"dropoff"`
 	TrainFood  int32  `json:"trainFood"`
 	TrainTicks int32  `json:"trainTicks"`
+	MinEra     int32  `json:"minEra"`
 }
 
 // TrainsVillager reports whether this building can train villagers.
@@ -77,6 +78,8 @@ func Parse(raw []byte) (*Table, error) {
 			return nil, fmt.Errorf("building %s: negative train cost", d.Key)
 		case d.TrainTicks > 0 && d.TrainFood < 0:
 			return nil, fmt.Errorf("building %s: training needs a food cost", d.Key)
+		case d.MinEra < 0 || d.MinEra > 4:
+			return nil, fmt.Errorf("building %s: minEra out of range", d.Key)
 		}
 		if d.ID < 0x100 {
 			seen[d.ID] = true

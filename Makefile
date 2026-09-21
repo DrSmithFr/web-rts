@@ -7,6 +7,7 @@ REPLAY := tools/replays/phase1_noop.rts
 ECONOMY := tools/replays/phase3_economy.rts
 PATHS := tools/replays/phase4_paths.rts
 COMBAT := tools/replays/phase5_combat.rts
+ERAS := tools/replays/phase6_eras.rts
 
 ifeq ($(OS),Windows_NT)
 DETCHECK := bin\detcheck.exe
@@ -39,6 +40,7 @@ test-det: bin/detcheck
 	$(DETCHECK) -verify $(ECONOMY)
 	$(DETCHECK) -verify $(PATHS)
 	$(DETCHECK) -verify $(COMBAT)
+	$(DETCHECK) -verify $(ERAS)
 
 test-parity: wasm bin/detcheck
 	node tools/fsutil.mjs mkdir build
@@ -53,6 +55,9 @@ test-parity: wasm bin/detcheck
 	node tools/parity/check.mjs build/native.txt build/wasm.txt
 	$(DETCHECK) -replay $(COMBAT) > build/native.txt
 	node tools/parity/run.mjs $(COMBAT) > build/wasm.txt
+	node tools/parity/check.mjs build/native.txt build/wasm.txt
+	$(DETCHECK) -replay $(ERAS) > build/native.txt
+	node tools/parity/run.mjs $(ERAS) > build/wasm.txt
 	node tools/parity/check.mjs build/native.txt build/wasm.txt
 
 test-client: client/node_modules

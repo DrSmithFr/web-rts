@@ -15,6 +15,8 @@ const (
 	MoveGroup = 6
 	Attack    = 7
 	Patrol    = 8
+	AgeUp     = 9
+	Research  = 10
 )
 
 // MoveItem is one unit destination in a group move.
@@ -125,6 +127,20 @@ func PatrolPayload(ids []uint32, x16, y16 uint16) []byte {
 	}
 	w.U16(x16)
 	w.U16(y16)
+	return w.Bytes()
+}
+
+// AgeUpPayload encodes "advance to the given era id".
+func AgeUpPayload(era uint8) []byte {
+	w := NewWriter()
+	w.Uvarint(uint64(era))
+	return w.Bytes()
+}
+
+// ResearchPayload encodes "research the given tech id".
+func ResearchPayload(tech uint16) []byte {
+	w := NewWriter()
+	w.Uvarint(uint64(tech))
 	return w.Bytes()
 }
 

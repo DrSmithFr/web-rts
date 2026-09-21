@@ -1,0 +1,230 @@
+{
+  "techs": [
+    {
+      "id": 1,
+      "key": "forging",
+      "era": 1,
+      "building": 4,
+      "costFood": 125,
+      "costWood": 0,
+      "costGold": 50,
+      "requires": [],
+      "ticks": 150,
+      "effects": [
+        { "field": "dmg", "class": 2, "value": 1 },
+        { "field": "dmg", "class": 4, "value": 1 }
+      ]
+    },
+    {
+      "id": 2,
+      "key": "scaleArmor",
+      "era": 1,
+      "building": 4,
+      "costFood": 100,
+      "costWood": 0,
+      "costGold": 50,
+      "requires": [],
+      "ticks": 150,
+      "effects": [
+        { "field": "armorC", "class": 2, "value": 1 },
+        { "field": "armorC", "class": 4, "value": 1 }
+      ]
+    },
+    {
+      "id": 3,
+      "key": "fletching",
+      "era": 1,
+      "building": 4,
+      "costFood": 80,
+      "costWood": 0,
+      "costGold": 40,
+      "requires": [],
+      "ticks": 150,
+      "effects": [
+        { "field": "dmg", "class": 3, "value": 1 },
+        { "field": "range16", "class": 3, "value": 8192 }
+      ]
+    },
+    {
+      "id": 4,
+      "key": "horseCollar",
+      "era": 1,
+      "building": 5,
+      "costFood": 100,
+      "costWood": 0,
+      "costGold": 20,
+      "requires": [],
+      "ticks": 150,
+      "effects": [
+        { "field": "speed16", "class": 1, "value": 492 }
+      ]
+    },
+    {
+      "id": 5,
+      "key": "mining",
+      "era": 1,
+      "building": 5,
+      "costFood": 0,
+      "costWood": 50,
+      "costGold": 75,
+      "requires": [],
+      "ticks": 150,
+      "effects": [
+        { "field": "carry", "class": 1, "value": 10 }
+      ]
+    },
+    {
+      "id": 6,
+      "key": "casting",
+      "era": 2,
+      "building": 4,
+      "costFood": 150,
+      "costWood": 0,
+      "costGold": 75,
+      "requires": [1],
+      "ticks": 200,
+      "effects": [
+        { "field": "dmg", "class": 2, "value": 1 },
+        { "field": "dmg", "class": 4, "value": 1 }
+      ]
+    },
+    {
+      "id": 7,
+      "key": "chainMail",
+      "era": 2,
+      "building": 6,
+      "costFood": 150,
+      "costWood": 0,
+      "costGold": 75,
+      "requires": [2],
+      "ticks": 200,
+      "effects": [
+        { "field": "armorC", "class": 2, "value": 1 }
+      ]
+    },
+    {
+      "id": 8,
+      "key": "bracer",
+      "era": 2,
+      "building": 4,
+      "costFood": 120,
+      "costWood": 0,
+      "costGold": 60,
+      "requires": [3],
+      "ticks": 200,
+      "effects": [
+        { "field": "dmg", "class": 3, "value": 1 }
+      ]
+    },
+    {
+      "id": 9,
+      "key": "wheelbarrow",
+      "era": 2,
+      "building": 5,
+      "costFood": 120,
+      "costWood": 0,
+      "costGold": 60,
+      "requires": [4],
+      "ticks": 200,
+      "effects": [
+        { "field": "carry", "class": 1, "value": 10 }
+      ]
+    },
+    {
+      "id": 10,
+      "key": "plateArmor",
+      "era": 3,
+      "building": 6,
+      "costFood": 250,
+      "costWood": 0,
+      "costGold": 150,
+      "requires": [7],
+      "ticks": 300,
+      "effects": [
+        { "field": "armorC", "class": 2, "value": 1 },
+        { "field": "armorC", "class": 3, "value": 1 },
+        { "field": "armorC", "class": 4, "value": 1 }
+      ]
+    },
+    {
+      "id": 11,
+      "key": "plateBarding",
+      "era": 3,
+      "building": 6,
+      "costFood": 250,
+      "costWood": 0,
+      "costGold": 150,
+      "requires": [7],
+      "ticks": 300,
+      "effects": [
+        { "field": "armorP", "class": 4, "value": 1 },
+        { "field": "armorC", "class": 4, "value": 1 }
+      ]
+    },
+    {
+      "id": 12,
+      "key": "damaskSteel",
+      "era": 3,
+      "building": 6,
+      "costFood": 250,
+      "costWood": 0,
+      "costGold": 150,
+      "requires": [6],
+      "ticks": 300,
+      "effects": [
+        { "field": "dmg", "class": 2, "value": 1 },
+        { "field": "dmg", "class": 3, "value": 1 },
+        { "field": "dmg", "class": 4, "value": 1 }
+      ]
+    },
+    {
+      "id": 13,
+      "key": "guilds",
+      "era": 3,
+      "building": 7,
+      "costFood": 200,
+      "costWood": 0,
+      "costGold": 200,
+      "requires": [9],
+      "ticks": 300,
+      "effects": [
+        { "field": "carry", "class": 1, "value": 15 }
+      ]
+    },
+    {
+      "id": 14,
+      "key": "combinedArms",
+      "era": 4,
+      "building": 6,
+      "costFood": 400,
+      "costWood": 0,
+      "costGold": 300,
+      "requires": [12],
+      "ticks": 400,
+      "effects": [
+        { "field": "dmg", "class": 2, "value": 1 },
+        { "field": "dmg", "class": 3, "value": 1 },
+        { "field": "dmg", "class": 4, "value": 1 }
+      ]
+    },
+    {
+      "id": 15,
+      "key": "fieldArmor",
+      "era": 4,
+      "building": 6,
+      "costFood": 400,
+      "costWood": 0,
+      "costGold": 300,
+      "requires": [10],
+      "ticks": 400,
+      "effects": [
+        { "field": "armorP", "class": 2, "value": 1 },
+        { "field": "armorP", "class": 3, "value": 1 },
+        { "field": "armorP", "class": 4, "value": 1 },
+        { "field": "armorC", "class": 2, "value": 1 },
+        { "field": "armorC", "class": 3, "value": 1 },
+        { "field": "armorC", "class": 4, "value": 1 }
+      ]
+    }
+  ]
+}
