@@ -23,10 +23,9 @@ export class GroundChunks {
   readonly group = new THREE.Group();
   readonly meshes: THREE.Mesh[] = [];
   private readonly chunks: Chunk[] = [];
-  private fog: FogView | null = null;
 
   constructor(
-    private readonly size: number,
+    size: number,
     tiles: Uint8Array,
     heights: Uint16Array,
   ) {
@@ -56,7 +55,6 @@ export class GroundChunks {
 
   // setFog repaints only chunks whose corner fog states changed.
   setFog(fog: FogView): void {
-    this.fog = fog;
     for (const c of this.chunks) {
       let dirty = false;
       const w = c.x1 - c.x0;
