@@ -92,3 +92,19 @@ func TestHashHexFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestMapIsDeterministicAndHashed(t *testing.T) {
+	a, b := NewWorld(0x5eed), NewWorld(0x5eed)
+	if a.Map().Hash() != b.Map().Hash() {
+		t.Fatal("map hash differs for the same seed")
+	}
+	if len(a.Map().Spawns()) == 0 {
+		t.Fatal("missing spawns")
+	}
+	// The map must contribute to the world hash: same counters, same tick,
+	// different map (seed) implies different world hash.
+	c := NewWorld(0x5eee)
+	if a.Hash() == c.Hash() {
+		t.Fatal("map seed invisible in world hash")
+	}
+}

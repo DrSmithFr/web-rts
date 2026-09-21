@@ -10,10 +10,17 @@
         color-scheme: dark;
         font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
       }
+      html,
       body {
         margin: 0;
+        overflow: hidden;
         background: #10131a;
         color: #d7dce6;
+      }
+      #gl {
+        position: fixed;
+        inset: 0;
+        display: block;
       }
       #hud {
         position: fixed;
@@ -25,21 +32,46 @@
         border-radius: 6px;
         font-size: 14px;
         line-height: 1.5;
+        user-select: none;
       }
       #hud .dim {
         color: #8a93a6;
       }
+      #hover {
+        position: fixed;
+        bottom: 12px;
+        left: 12px;
+        padding: 6px 10px;
+        background: rgba(10, 12, 18, 0.8);
+        border: 1px solid #2c3345;
+        border-radius: 6px;
+        font-size: 13px;
+        visibility: hidden;
+        user-select: none;
+      }
+      #selrect {
+        position: fixed;
+        border: 1px solid #ffffff;
+        background: rgba(255, 255, 255, 0.12);
+        display: none;
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
+    <canvas id="gl"></canvas>
     <div id="hud">
       <div id="status" class="dim">initializing</div>
       <div id="stats" hidden>
         <div><span class="dim">tick</span> <span id="tick">0</span></div>
         <div><span class="dim">hash</span> <span id="hash">0000000000000000</span></div>
+        <div><span class="dim">map</span> <span id="map">—</span></div>
         <div><span class="dim">fps</span> <span id="fps">0</span></div>
+        <div><span class="dim">selected</span> <span id="selected">0</span></div>
       </div>
     </div>
+    <div id="hover"></div>
+    <div id="selrect"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

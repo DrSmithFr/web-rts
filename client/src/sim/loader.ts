@@ -7,6 +7,12 @@ export interface RawSim {
   tick(id: number): number;
   hashHex(id: number): string;
   seed(id: number): number;
+  mapSize(id: number): number;
+  mapTiles(id: number): Uint8Array;
+  mapHeights(id: number): Uint8Array;
+  mapHashHex(id: number): string;
+  spawnCount(id: number): number;
+  spawnAt(id: number, index: number): number;
 }
 
 declare global {
