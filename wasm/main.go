@@ -9,7 +9,7 @@
 //
 // JavaScript surface (window.RTSSim):
 //
-//	newWorld(seed)        -> world id (seed may be omitted, defaults to 0x5eed)
+//	newWorld(seed, size?, players?) -> world id (defaults 0x5eed, 200, 4)
 //	step(id)              -> execute one 20 Hz tick, applying due orders
 //	order(id, player, kind, payloadUint8Array) -> schedule at tick+2
 //	tick(id)              -> ticks executed
@@ -32,6 +32,7 @@
 //	                          trainReq u8, tileX u16, tileY u16, pad u8
 //	economyBlob(id)       -> Uint8Array, 32-byte records per player slot:
 //	                          active u8, pop u16, popCap u16, res u32 * 6
+//	fogBlob(id, player)   -> Uint8Array of 2-bit fog states, row-major
 //	defs(id)              -> array of building defs {id,key,costWood,
 //	                          costStone,buildTicks,popRoom,size,dropoff,
 //	                          trainFood,trainTicks}
@@ -48,8 +49,10 @@ import (
 
 	"rts/sim/core"
 	"rts/sim/entity"
+	"rts/sim/fog"
 	"rts/sim/lockstep"
 	"rts/sim/proto"
+	"rts/sim/worldgen"
 )
 
 const bridgeVersion = "0.1.0"
@@ -63,10 +66,18 @@ var instances []*instance
 
 func newWorld(this js.Value, args []js.Value) any {
 	var seed uint64 = 0x5eed
+	size := worldgen.DefaultSize
+	players := worldgen.DefaultPlayers
 	if len(args) > 0 {
 		seed = uint64(args[0].Float())
 	}
-	instances = append(instances, &instance{world: core.NewWorld(seed)})
+	if len(args) > 1 && args[1].Type() == js.TypeNumber {
+		size = args[1].Int()
+	}
+	if len(args) > 2 && args[2].Type() == js.TypeNumber {
+		players = args[2].Int()
+	}
+	instances = append(instances, &instance{world: core.NewWorldSize(seed, size, players)})
 	return float64(len(instances) - 1)
 }
 
@@ -256,6 +267,19 @@ func economyBlob(this js.Value, args []js.Value) any {
 	})
 }
 
+func fogBlob(this js.Value, args []js.Value) any {
+	w := mustID(args)
+	if len(args) < 2 {
+		panic("RTSSim: fogBlob requires (id, player)")
+	}
+	g := w.world.Fog(uint8(args[1].Int()))
+	buf := make([]byte, fog.PackedLen(g.Size()))
+	g.Packed(buf[:0])
+	out := js.Global().Get("Uint8Array").New(len(buf))
+	js.CopyBytesToJS(out, buf)
+	return out
+}
+
 func defs(this js.Value, args []js.Value) any {
 	arr := js.Global().Get("Array").New()
 	for _, d := range mustID(args).world.BuildingDefs().Defs() {
@@ -294,6 +318,7 @@ func main() {
 	obj.Set("buildingsBlob", js.FuncOf(buildingsBlob))
 	obj.Set("economyBlob", js.FuncOf(economyBlob))
 	obj.Set("defs", js.FuncOf(defs))
+	obj.Set("fogBlob", js.FuncOf(fogBlob))
 	obj.Set("version", js.FuncOf(version))
 	js.Global().Set("RTSSim", obj)
 	select {}
