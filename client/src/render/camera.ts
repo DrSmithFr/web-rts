@@ -34,6 +34,12 @@ export class RtsCamera {
     this.yaw += dyaw;
   }
 
+  // focus moves the orbit target to a ground position, staying clamped.
+  focus(x: number, z: number): void {
+    this.target.set(x, 0, z);
+    this.pan(0, 0);
+  }
+
   zoom(factor: number): void {
     this.dist = THREE.MathUtils.clamp(this.dist * factor, MIN_DIST, this.span * MAX_DIST_FACTOR);
   }

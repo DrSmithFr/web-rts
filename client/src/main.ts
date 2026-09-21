@@ -80,6 +80,9 @@ try {
   refreshNodeIndex();
 
   const rtsCam = new RtsCamera(camera, size);
+  const home = world.spawns()[LOCAL_PLAYER] ?? { x: size / 2, y: size / 2 };
+  rtsCam.focus(home.x + 0.5, home.y + 0.5);
+  rtsCam.zoom(0.5);
   mapEl.textContent = `${size}² ${world.mapHashHex().slice(0, 8)}`;
 
   let units: UnitRec[] = [];
