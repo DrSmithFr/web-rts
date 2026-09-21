@@ -9,7 +9,7 @@
 //
 // JavaScript surface (window.RTSSim):
 //
-//	newWorld(seed, size?, players?) -> world id (defaults 0x5eed, 200, 4)
+//	newWorld(seed)        -> world id (seed may be omitted, defaults to 0x5eed)
 //	step(id)              -> execute one 20 Hz tick, applying due orders
 //	order(id, player, kind, payloadUint8Array) -> schedule at tick+2
 //	tick(id)              -> ticks executed
@@ -52,7 +52,6 @@ import (
 	"rts/sim/fog"
 	"rts/sim/lockstep"
 	"rts/sim/proto"
-	"rts/sim/worldgen"
 )
 
 const bridgeVersion = "0.1.0"
@@ -66,18 +65,10 @@ var instances []*instance
 
 func newWorld(this js.Value, args []js.Value) any {
 	var seed uint64 = 0x5eed
-	size := worldgen.DefaultSize
-	players := worldgen.DefaultPlayers
 	if len(args) > 0 {
 		seed = uint64(args[0].Float())
 	}
-	if len(args) > 1 && args[1].Type() == js.TypeNumber {
-		size = args[1].Int()
-	}
-	if len(args) > 2 && args[2].Type() == js.TypeNumber {
-		players = args[2].Int()
-	}
-	instances = append(instances, &instance{world: core.NewWorldSize(seed, size, players)})
+	instances = append(instances, &instance{world: core.NewWorld(seed)})
 	return float64(len(instances) - 1)
 }
 
@@ -273,8 +264,7 @@ func fogBlob(this js.Value, args []js.Value) any {
 		panic("RTSSim: fogBlob requires (id, player)")
 	}
 	g := w.world.Fog(uint8(args[1].Int()))
-	buf := make([]byte, fog.PackedLen(g.Size()))
-	g.Packed(buf[:0])
+	buf := g.Packed(make([]byte, 0, fog.PackedLen(g.Size())))
 	out := js.Global().Get("Uint8Array").New(len(buf))
 	js.CopyBytesToJS(out, buf)
 	return out

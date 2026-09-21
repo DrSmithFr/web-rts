@@ -3,6 +3,7 @@ package core
 import (
 	"rts/sim/entity"
 	"rts/sim/fixed"
+	"rts/sim/fog"
 	"rts/sim/resource"
 )
 
@@ -99,4 +100,13 @@ type Player struct {
 	Active bool
 	Res    [resource.Count]int32
 	Pop    int32
+}
+
+// FogState returns the raw fog state (0 unexplored, 1 explored, 2
+// visible) of a tile for a player, or Unexplored for inactive players.
+func (w *World) FogState(player uint8, x, y int) uint8 {
+	if player >= MaxPlayers || !w.players[player].Active {
+		return fog.Unexplored
+	}
+	return w.fogs[player].State(x, y)
 }
