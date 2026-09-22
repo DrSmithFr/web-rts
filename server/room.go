@@ -11,12 +11,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 
 	"rts/server/wire"
+	"rts/sim/bots"
 	"rts/sim/core"
 	"rts/sim/lockstep"
 	"rts/sim/proto"
@@ -104,21 +106,23 @@ type logEntry struct {
 type Room struct {
 	Code string
 
-	mu        sync.Mutex
-	state     string // lobby, running
-	seed      int64
-	humans    int
-	bots      int
-	players   [core.MaxPlayers]*playerSlot
-	world     *core.World
-	queue     lockstep.Queue
-	log       []logEntry
-	tick      uint32
-	hashes    map[uint32]uint64 // recent server hashes by tick
-	paused    bool
-	done      chan struct{}
-	broadcast func(b []byte)
-	hub       *Hub
+	mu         sync.Mutex
+	state      string // lobby, running
+	seed       int64
+	humans     int
+	bots       int
+	difficulty string
+	brains     [core.MaxPlayers]*bots.Brain
+	players    [core.MaxPlayers]*playerSlot
+	world      *core.World
+	queue      lockstep.Queue
+	log        []logEntry
+	tick       uint32
+	hashes     map[uint32]uint64 // recent server hashes by tick
+	paused     bool
+	done       chan struct{}
+	broadcast  func(b []byte)
+	hub        *Hub
 }
 
 type playerSlot struct {
@@ -184,6 +188,15 @@ func (r *Room) Start() error {
 			total++
 		}
 	}
+	diff, ok := difficultyOf(r.difficulty)
+	for i := range r.players {
+		if r.brains[i] != nil {
+			r.brains[i] = nil
+		}
+		if ok && r.players[i] != nil && r.players[i].bot {
+			r.brains[i] = bots.New(uint8(i), diff)
+		}
+	}
 	r.world = core.NewWorldSize(uint64(r.seed), worldgen.DefaultSize, total)
 	r.log = nil
 	r.tick = 0
@@ -226,8 +239,35 @@ func (r *Room) loop() {
 	}
 }
 
+// difficultyOf maps the wire difficulty string to a bot difficulty;
+// an empty string disables brains (idle bot slots).
+func difficultyOf(name string) (bots.Difficulty, bool) {
+	switch strings.ToLower(name) {
+	case "easy":
+		return bots.Easy, true
+	case "standard":
+		return bots.Standard, true
+	case "hard":
+		return bots.Hard, true
+	}
+	return bots.Standard, false
+}
+
 func (r *Room) stepLocked() {
-	due := r.queue.Due(r.tick)
+	// bot brains decide on the current world state and enter their
+	// orders with the batch for this tick; slot order keeps the batch
+	// deterministic and the log carries them for catch-up and replay
+	var due []proto.Order
+	for i := range r.brains {
+		if r.brains[i] == nil {
+			continue
+		}
+		for _, o := range r.brains[i].Step(r.world, r.tick) {
+			o.Tick = r.tick
+			due = append(due, o)
+		}
+	}
+	due = append(due, r.queue.Due(r.tick)...)
 	r.world.Step(due)
 	r.log = append(r.log, logEntry{Tick: r.tick, Orders: due})
 	h := r.world.Hash()

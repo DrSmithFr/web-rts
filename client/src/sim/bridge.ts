@@ -88,6 +88,14 @@ export class SimWorld {
     this.sim.step(this.id);
   }
 
+  brainNew(player: number, difficulty: string): number {
+    return this.sim.brainNew(this.id, player, difficulty);
+  }
+
+  debugSpawn(owner: number, defId: number, count: number): void {
+    this.sim.debugSpawn(this.id, owner, defId, count);
+  }
+
   stepWith(orders: { player: number; kind: number; payload: Uint8Array }[]): void {
     let len = 2;
     for (const o of orders) len += 5 + o.payload.length;

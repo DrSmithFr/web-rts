@@ -19,6 +19,9 @@ type ClientMsg struct {
 	Payload string  `json:"payload,omitempty"` // base64
 	Tick    *uint32 `json:"tick,omitempty"`
 	Hash    *string `json:"hash,omitempty"` // decimal
+	// Difficulty selects the bot brains when the room starts: easy,
+	// standard or hard; empty keeps bot slots idle (scripted tests).
+	Difficulty string `json:"difficulty,omitempty"`
 }
 
 // Server -> client messages.

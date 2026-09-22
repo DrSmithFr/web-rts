@@ -5,6 +5,8 @@ export interface RawSim {
   order(id: number, player: number, kind: number, payload?: Uint8Array): void;
   step(id: number): void;
   stepWith(id: number, buf: Uint8Array): void;
+  brainNew(id: number, player: number, difficulty: string): number;
+  debugSpawn(id: number, owner: number, defId: number, count: number): void;
   tick(id: number): number;
   hashHex(id: number): string;
   seed(id: number): number;

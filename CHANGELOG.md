@@ -5,6 +5,46 @@ merges (`vNN-phase-name`).
 
 ## Unreleased
 
+## [v08-bots-menus-e2e] - 2026-09-22
+
+Phase 8: deterministic bot AI, game menus, and Playwright end-to-end tests.
+
+### Added
+
+- `sim/bots`: fog-limited, fully deterministic `Brain` state machine —
+  villager allocation, compass-spiral exploration, wood/deer seeking,
+  per-era build order, age-ups, tech research, military production and
+  a relic rush. Easy/Standard/Hard alter only reaction speed and
+  aggression. Food is finite on the map (berries + deer), so doctrine
+  keeps villages lean; unsupervised 3-bot games run to a relic
+  victory.
+- Brain tests: era ladder, brain determinism (identical hashes across
+  runs), three-brain game to winner.
+- Server-hosted bots: `start` carries `difficulty`
+  (easy/standard/hard; empty leaves slots idle for scripted tests);
+  brains step inside the authoritative loop and their orders join the
+  per-tick batch, the order log, catch-up and replays.
+  `TestBotsHostedOnServer` hash-matches a mirror client for 3000 ticks.
+- Solo play: wasm `brainNew` export; `?bots=N&difficulty=...` runs
+  bots entirely in the browser sim.
+- Main menu and game-setup screens (solo/multiplayer/options/credits;
+  seed, map, bot count, difficulty, victory fields); boots remain
+  fully URL-driven (`menu=off` bypasses), which keeps sessions and
+  tests reproducible.
+- `?turbo=N` solo tick accelerator; `RTSSim.debugSpawn` +
+  `core.DebugSpawnUnits` for load tests; a small `window.__rts`
+  automation surface.
+- Playwright E2E suite (`make test-e2e`, 4 specs): main menu → first
+  harvest; turbo build/train/age-up; second browser context joins a
+  hosted room with hash sync and no desync; 500-unit frame-rate
+  regression guard. CI installs the Playwright browser and runs the
+  whole matrix on three OSes; `NO_E2E=1` skips.
+
+### Changed
+
+- `session.start()` accepts an optional difficulty; `make test` now
+  includes the E2E phase.
+
 ## [v07-network-lobby] - 2026-09-22
 
 Phase 7: authoritative multiplayer server and browser session client.
