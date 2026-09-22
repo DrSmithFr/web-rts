@@ -171,6 +171,8 @@
         z-index: 50;
         font: 15px system-ui, sans-serif;
       }
+      /* display:flex above overrides the hidden attribute's UA rule */
+      #menu[hidden] { display: none; }
       #menu .mscreen { width: 320px; text-align: center; }
       #menu .mtitle { font-size: 30px; letter-spacing: 4px; color: #caa84f; margin-bottom: 22px; }
       #menu .mbtn {

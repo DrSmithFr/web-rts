@@ -25,6 +25,7 @@ test('main menu starts a solo game that harvests its first resource', async ({ p
   await page.getByRole('button', { name: 'Start' }).click();
 
   await page.waitForFunction(() => typeof window.__rts !== 'undefined', undefined, { timeout: 30_000 });
+  await expect(page.locator('#menu')).toBeHidden();
   await page.waitForFunction(() => window.__rts.tick() > 20, undefined, { timeout: 15_000 });
 
   // order every villager to a food node
