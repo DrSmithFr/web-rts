@@ -28,5 +28,8 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install --no-progress --yes make
 
+      - name: Install Playwright browser
+        run: npm --prefix client ci && npx --prefix client playwright install --with-deps chromium
+
       - name: Test
         run: make test

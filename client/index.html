@@ -160,6 +160,33 @@
         display: none;
         user-select: none;
       }
+      #menu {
+        position: fixed;
+        inset: 0;
+        background: radial-gradient(ellipse at center, #141a2a 0%, #070910 100%);
+        color: #e8dfc0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+        font: 15px system-ui, sans-serif;
+      }
+      #menu .mscreen { width: 320px; text-align: center; }
+      #menu .mtitle { font-size: 30px; letter-spacing: 4px; color: #caa84f; margin-bottom: 22px; }
+      #menu .mbtn {
+        display: block; width: 100%; margin: 8px 0; padding: 10px;
+        background: #1b2438; color: #e8dfc0; border: 1px solid #3a4a6d;
+        border-radius: 5px; font-size: 15px; cursor: pointer;
+      }
+      #menu .mbtn:hover { background: #27324e; border-color: #caa84f; }
+      #menu .mbtn.ghost { background: transparent; color: #9aa7c4; }
+      #menu .mrow { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+      #menu .mrow label { flex: 0 0 110px; text-align: right; color: #9aa7c4; }
+      #menu .mrow select, #menu .mrow input {
+        flex: 1; padding: 7px; background: #10182a; color: #e8dfc0;
+        border: 1px solid #3a4a6d; border-radius: 4px;
+      }
+      #menu .mline { margin: 6px 0; color: #b9c2d8; }
     </style>
   </head>
   <body>
@@ -187,6 +214,7 @@
     </div>
     <div id="panel"></div>
     <div id="victory"></div>
+    <div id="menu" hidden></div>
     <div id="minimapbox">
       <canvas id="minimap" width="168" height="168"></canvas>
     </div>

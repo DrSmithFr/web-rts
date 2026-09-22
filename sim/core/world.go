@@ -311,3 +311,25 @@ func (w *World) Hash() uint64 {
 
 // HashHex renders the state hash as 16 lowercase hex digits.
 func (w *World) HashHex() string { return fmt.Sprintf("%016x", w.Hash()) }
+
+// DebugSpawnUnits fills walkable ground scanning from the owner's map
+// corner with count units of defID, ignoring costs and population. Dev
+// tooling and E2E performance scenarios only; never reachable from
+// orders.
+func (w *World) DebugSpawnUnits(owner uint8, defID uint16, count int) {
+	spawns := w.gameMap.Spawns()
+	if int(owner) >= len(spawns) && len(spawns) == 0 {
+		return
+	}
+	size := int32(w.gameMap.Grid().Size())
+	placed := 0
+	for y := int32(0); y < size && placed < count; y++ {
+		for x := int32(0); x < size && placed < count; x++ {
+			if !w.tileWalkable(x, y) {
+				continue
+			}
+			w.spawnUnit(owner, defID, tileCenter(x), tileCenter(y))
+			placed++
+		}
+	}
+}

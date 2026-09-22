@@ -24,6 +24,7 @@ import {
   trainPayload,
 } from './sim/ordercodec';
 import { NetSession } from './net/session';
+import { menuFlow } from './ui/menu';
 import { FixedStepLoop } from './engine/loop';
 import { Interpolated } from './engine/interpolate';
 import { ControlGroups } from './engine/groups';
@@ -90,7 +91,13 @@ function netStatus(msg: string): void {
 
 try {
   const sim = await loadSim();
-  const params = new URLSearchParams(window.location.search);
+  let params = new URLSearchParams(window.location.search);
+  if (!params.get('ws') && params.get('menu') !== 'off') {
+    const defWs = `ws://${window.location.hostname}:8787`;
+    const res = await menuFlow(defWs);
+    window.history.replaceState({}, '', `?${res.params.toString()}`);
+    params = res.params;
+  }
   const wsUrl = params.get('ws');
   let seed: string;
   let playerCount = 0;
@@ -113,14 +120,55 @@ try {
       );
     }
     netStatus('connecting...');
+    // available before boot completes: hosting an E2E match needs a
+    // way to press "start" while the page waits for the match itself
+    (window as unknown as Record<string, unknown>).__rts = {
+      start: (diff?: string) => session?.start(diff),
+      isOnline: () => true,
+    };
     const boot = await session.booted();
     seed = boot.seed;
     LOCAL_PLAYER = boot.player;
     playerCount = boot.playerCount;
   } else {
     seed = seedFromLocation(window.location.search).toString(16);
+    const soloBots = Number(params.get('bots') ?? 0);
+    if (soloBots > 0) playerCount = 1 + soloBots;
   }
   const world = SimWorld.create(sim, seed, playerCount || undefined);
+  if (!session) {
+    const soloBots = Number(params.get('bots') ?? 0);
+    const diff = params.get('difficulty') || 'standard';
+    for (let slot = 1; slot < 1 + soloBots; slot++) world.brainNew(slot, diff);
+  }
+  // minimal automation surface for E2E tests (and console tinkering)
+  const pre = ((window as unknown as Record<string, unknown>).__rts ??
+    {}) as Record<string, unknown>;
+  Object.assign(pre, {
+    start: (diff?: string) => session?.start(diff),
+    isOnline: () => session !== null,
+  });
+  Object.assign(pre, {
+    world,
+    issue,
+    spawn: (owner: number, def: number, count: number) => world.debugSpawn(owner, def, count),
+    local: () => LOCAL_PLAYER,
+    tick: () => world.tick(),
+    hash: () => world.hashHex(),
+    victory: () => world.victory(),
+    units: () => world.units(),
+    nodes: () => world.nodes(),
+    economy: () => world.economy(),
+    kinds: OrderKind,
+    payload: {
+      gather: gatherPayload,
+      build: buildPayload,
+      train: trainPayload,
+      era: eraPayload,
+      attack: attackPayload,
+    },
+  });
+  (window as unknown as Record<string, unknown>).__rts = pre;
   if (session) {
     const boot = session.bootData!;
     for (let tt = 0; tt < boot.tick; tt++) {
@@ -843,9 +891,14 @@ try {
     interp.commit(units.map((u) => [u.id, { x: u.x, y: u.y }] as [number, { x: number; y: number }]));
   }
 
+  // ?turbo=N runs N sim ticks per loop iteration (solo only); used by
+  // E2E to fast-forward long deterministic games in real time.
+  const turbo = session ? 1 : Math.min(50, Math.max(1, Number(params.get('turbo') ?? 1)));
   const loop = new FixedStepLoop(
     () => {
-      if (!session) world.step();
+      if (!session) {
+        for (let i = 0; i < turbo; i++) world.step();
+      }
       commitSnapshot();
     },
     () => {

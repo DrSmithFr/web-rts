@@ -69,6 +69,7 @@ import (
 	"strings"
 	"syscall/js"
 
+	"rts/sim/bots"
 	"rts/sim/core"
 	"rts/sim/entity"
 	"rts/sim/fog"
@@ -80,8 +81,9 @@ import (
 const bridgeVersion = "0.1.0"
 
 type instance struct {
-	world *core.World
-	queue lockstep.Queue
+	world  *core.World
+	queue  lockstep.Queue
+	brains []*bots.Brain
 }
 
 var instances []*instance
@@ -141,8 +143,46 @@ func order(this js.Value, args []js.Value) any {
 
 func step(this js.Value, args []js.Value) any {
 	inst := mustID(args)
-	inst.world.Step(inst.queue.Due(inst.world.Tick()))
+	due := inst.queue.Due(inst.world.Tick())
+	tick := inst.world.Tick()
+	for _, br := range inst.brains {
+		due = append(due, br.Step(inst.world, tick)...)
+	}
+	inst.world.Step(due)
 	return nil
+}
+
+// brainNew(id, player, difficulty) registers a bot brain on a world and
+// returns its handle. Solo mode drives bots fully inside the wasm sim;
+// their orders join every local step, keeping replays of the human
+// queue deterministic.
+// debugSpawn(id, owner, defID, count) mass-spawns units for the E2E
+// performance scenario; mirrors core.DebugSpawnUnits.
+func debugSpawn(this js.Value, args []js.Value) any {
+	inst := mustID(args)
+	if len(args) < 4 {
+		panic("RTSSim: debugSpawn requires (id, owner, defID, count)")
+	}
+	inst.world.DebugSpawnUnits(uint8(args[1].Int()), uint16(args[2].Int()), args[3].Int())
+	return nil
+}
+
+func brainNew(this js.Value, args []js.Value) any {
+	inst := mustID(args)
+	if len(args) < 3 {
+		panic("RTSSim: brainNew requires (id, player, difficulty)")
+	}
+	var d bots.Difficulty
+	switch strings.ToLower(args[2].String()) {
+	case "easy":
+		d = bots.Easy
+	case "hard":
+		d = bots.Hard
+	default:
+		d = bots.Standard
+	}
+	inst.brains = append(inst.brains, bots.New(uint8(args[1].Int()), d))
+	return float64(len(inst.brains) - 1)
 }
 
 // stepWith(id, ptr, len) steps exactly one tick with an explicit order
@@ -492,6 +532,8 @@ func main() {
 	obj.Set("order", js.FuncOf(order))
 	obj.Set("step", js.FuncOf(step))
 	obj.Set("stepWith", js.FuncOf(stepWith))
+	obj.Set("brainNew", js.FuncOf(brainNew))
+	obj.Set("debugSpawn", js.FuncOf(debugSpawn))
 	obj.Set("tick", js.FuncOf(tick))
 	obj.Set("hashHex", js.FuncOf(hashHex))
 	obj.Set("seed", js.FuncOf(seed))

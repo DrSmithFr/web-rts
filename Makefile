@@ -66,8 +66,8 @@ test-client: client/node_modules
 test-func:
 	go test ./server/ -count=1
 
-test-e2e:
-	@echo e2e tests: playwright lands in phase 8, skipped
+test-e2e: bin/rts-server client/node_modules
+	@if [ "$${NO_E2E:-0}" = "1" ]; then echo "e2e skipped (NO_E2E=1)"; else npm --prefix client run e2e; fi
 
 client/node_modules: client/package.json client/package-lock.json
 	npm --prefix client ci
