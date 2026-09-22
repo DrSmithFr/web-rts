@@ -65,6 +65,8 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"strconv"
+	"strings"
 	"syscall/js"
 
 	"rts/sim/core"
@@ -72,6 +74,7 @@ import (
 	"rts/sim/fog"
 	"rts/sim/lockstep"
 	"rts/sim/proto"
+	"rts/sim/worldgen"
 )
 
 const bridgeVersion = "0.1.0"
@@ -85,10 +88,23 @@ var instances []*instance
 
 func newWorld(this js.Value, args []js.Value) any {
 	var seed uint64 = 0x5eed
+	players := worldgen.DefaultPlayers
 	if len(args) > 0 {
-		seed = uint64(args[0].Float())
+		switch args[0].Type() {
+		case js.TypeString:
+			v, err := strconv.ParseUint(strings.TrimPrefix(args[0].String(), "0x"), 16, 64)
+			if err != nil {
+				panic("RTSSim: bad seed " + args[0].String())
+			}
+			seed = v
+		case js.TypeNumber:
+			seed = uint64(args[0].Float())
+		}
 	}
-	instances = append(instances, &instance{world: core.NewWorld(seed)})
+	if len(args) > 1 && args[1].Type() == js.TypeNumber {
+		players = args[1].Int()
+	}
+	instances = append(instances, &instance{world: core.NewWorldSize(seed, worldgen.DefaultSize, players)})
 	return float64(len(instances) - 1)
 }
 
@@ -126,6 +142,37 @@ func order(this js.Value, args []js.Value) any {
 func step(this js.Value, args []js.Value) any {
 	inst := mustID(args)
 	inst.world.Step(inst.queue.Due(inst.world.Tick()))
+	return nil
+}
+
+// stepWith(id, ptr, len) steps exactly one tick with an explicit order
+// batch received from the authoritative server (online mode). Blob layout:
+// count u16, then per order: player u8, kind u16, payloadLen u16, payload.
+func stepWith(this js.Value, args []js.Value) any {
+	inst := mustID(args)
+	if len(args) < 2 {
+		panic("RTSSim: stepWith requires (id, ptr)")
+	}
+	raw := make([]byte, args[1].Get("length").Int())
+	js.CopyBytesToGo(raw, args[1])
+	n := int(binary.LittleEndian.Uint16(raw))
+	off := 2
+	due := make([]proto.Order, 0, n)
+	for i := 0; i < n; i++ {
+		o := proto.Order{
+			Tick:   inst.world.Tick(),
+			Player: raw[off],
+			Kind:   proto.Kind(binary.LittleEndian.Uint16(raw[off+1:])),
+		}
+		pl := int(binary.LittleEndian.Uint16(raw[off+3:]))
+		off += 5
+		if pl > 0 {
+			o.Payload = append([]byte(nil), raw[off:off+pl]...)
+			off += pl
+		}
+		due = append(due, o)
+	}
+	inst.world.Step(due)
 	return nil
 }
 
@@ -444,6 +491,7 @@ func main() {
 	obj.Set("newWorld", js.FuncOf(newWorld))
 	obj.Set("order", js.FuncOf(order))
 	obj.Set("step", js.FuncOf(step))
+	obj.Set("stepWith", js.FuncOf(stepWith))
 	obj.Set("tick", js.FuncOf(tick))
 	obj.Set("hashHex", js.FuncOf(hashHex))
 	obj.Set("seed", js.FuncOf(seed))

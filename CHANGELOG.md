@@ -5,6 +5,43 @@ merges (`vNN-phase-name`).
 
 ## Unreleased
 
+## [v07-network-lobby] - 2026-09-22
+
+Phase 7: authoritative multiplayer server and browser session client.
+
+### Added
+
+- `server` package + `rts-server` binary: lobby creation with 6-character
+  invitation codes, up to eight human/bot slots, host-only start, and
+  `-fast` accelerated tick loop (`make run-server`).
+- WebSocket protocol (`server/wire`, JSON frames with base64 order
+  payloads): create/join/start/order/hash plus welcome/lobby/start/tick/
+  catchup/pause/resume/desync events; seeds and hashes travel as hex
+  strings to survive JSON number precision.
+- Lockstep relay stamped `T+2` over `sim/lockstep`: every tick broadcasts
+  the exact order batch the authoritative world stepped with plus the
+  state hash; clients step from the batches and confirm hashes back.
+- Arbitration and flow control: mismatched client hashes flag the player
+  and broadcast a desync event; a client four hash windows behind pauses
+  the room and resumes on catch-up.
+- Reconnect via welcome token: the slot is reclaimed and the seed plus
+  full order log replay the client up deterministically.
+- `client/src/net/session.ts`: session client with boot/catch-up replay,
+  per-tick stepping through the new `stepWith` wasm export, hash
+  verification and confirmation, tick buffering during boot; URL entry
+  points (`?ws=...&create=1[&bots=N][&autostart=1]`, `?ws=...&code=...`),
+  net-status banner, orders routed through the socket in online mode and
+  `LOCAL_PLAYER` taken from the server.
+- `wasm`: `newWorld(seed, players)` and `stepWith(id, batch)` exports.
+- Functional tests (`go test ./server/`, wired into `make test-func`):
+  lobby create/join/leave/start, T+2 relay discipline, induced desync,
+  reconnect with replay catch-up, and a scripted game against three bots
+  driven to relic victory at accelerated speed.
+
+### Changed
+
+- `make test-func` now runs the WebSocket scenarios instead of skipping.
+
 ## [v06-eras-tech-victory] - 2026-09-21
 
 Phase 6: the five-era ladder with age-up, prerequisite technology trees,

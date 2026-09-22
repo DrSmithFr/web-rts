@@ -23,6 +23,7 @@ import {
   stopPayload,
   trainPayload,
 } from './sim/ordercodec';
+import { NetSession } from './net/session';
 import { FixedStepLoop } from './engine/loop';
 import { Interpolated } from './engine/interpolate';
 import { ControlGroups } from './engine/groups';
@@ -41,7 +42,7 @@ import { HEIGHT_SCALE, PALETTE, PLAYER_COLORS } from './render/palette';
 import { terrainName } from './render/terrainLabels';
 import { t, tn } from './i18n';
 
-const LOCAL_PLAYER = 0;
+let LOCAL_PLAYER = 0;
 const NEUTRAL_OWNER = 255;
 // Moving states get the walk bob: move, attack (chase), patrol, wander, flee.
 const MOVING_STATES = new Set([1, 5, 6, 7, 8]);
@@ -78,10 +79,61 @@ const canvas = document.querySelector<HTMLCanvasElement>('#gl')!;
 
 statusEl.textContent = t('hud.status.loading');
 
+const netEl = document.querySelector<HTMLDivElement>('#netstatus')!;
+let session: NetSession | null = null;
+
+function netStatus(msg: string): void {
+  netEl.textContent = msg;
+  netEl.hidden = !msg;
+  netEl.classList.toggle('err', msg.startsWith('DESYNC') || msg.startsWith('error'));
+}
+
 try {
   const sim = await loadSim();
-  const seed = seedFromLocation(window.location.search);
-  const world = SimWorld.create(sim, seed);
+  const params = new URLSearchParams(window.location.search);
+  const wsUrl = params.get('ws');
+  let seed: string;
+  let playerCount = 0;
+  if (wsUrl) {
+    session = new NetSession(wsUrl, {
+      onStatus: netStatus,
+      onLobby: (code, players) => netStatus(`room ${code}: ${players.map((p) => p.name).join(', ')}`),
+    });
+    if (params.get('create') !== null) {
+      session.create(params.get('name') || 'Player', Number(params.get('bots') ?? 0));
+      if (params.get('autostart') !== null) session.start();
+      const after = Number(params.get('startafter') ?? '');
+      if (after > 0) setTimeout(() => session?.start(), after);
+    } else {
+      session.join(
+        params.get('code') || sessionStorage.getItem('rts.code') || '',
+        params.get('name') || 'Player',
+        sessionStorage.getItem('rts.token') || '',
+      );
+    }
+    netStatus('connecting...');
+    const boot = await session.booted();
+    seed = boot.seed;
+    LOCAL_PLAYER = boot.player;
+    playerCount = boot.playerCount;
+  } else {
+    seed = seedFromLocation(window.location.search).toString(16);
+  }
+  const world = SimWorld.create(sim, seed, playerCount || undefined);
+  if (session) {
+    const boot = session.bootData!;
+    for (let tt = 0; tt < boot.tick; tt++) {
+      world.stepWith(boot.orders.get(tt) ?? []);
+    }
+    session.onTick = (tick, orders, hash) => {
+      world.stepWith(orders);
+      const local = world.hashHex();
+      if (hash && local !== hash) {
+        netStatus(`DESYNC at tick ${tick}: local ${local} server ${hash}`);
+      }
+      session!.confirm(tick, local);
+    };
+  }
   statusEl.hidden = true;
   statsEl.hidden = false;
   resbarEl.style.display = 'flex';
@@ -254,17 +306,22 @@ try {
   }
 
   // --- orders -------------------------------------------------------------
+  function issue(kind: number, payload: Uint8Array): void {
+    if (session) session.sendOrder(kind, payload);
+    else world.order(LOCAL_PLAYER, kind, payload);
+  }
+
   function issueMove(tile: number): void {
     const ids = selectedVillagers();
     if (ids.length === 0) return;
     const tx = tile % size;
     const ty = Math.floor(tile / size);
-    world.order(LOCAL_PLAYER, OrderKind.MoveGroup, moveGroupPayload(ids, tx * 16 + 8, ty * 16 + 8));
+    issue(OrderKind.MoveGroup, moveGroupPayload(ids, tx * 16 + 8, ty * 16 + 8));
   }
 
   function issueGather(node: NodeRec): void {
     for (const id of selectedVillagers()) {
-      world.order(LOCAL_PLAYER, OrderKind.Gather, gatherPayload(id, node.id));
+      issue(OrderKind.Gather, gatherPayload(id, node.id));
     }
   }
 
@@ -274,26 +331,26 @@ try {
     if (ids.length === 0) return;
     const tx = tile % size;
     const ty = Math.floor(tile / size);
-    world.order(LOCAL_PLAYER, OrderKind.Build, buildPayload(ids[0], placing.id, tx, ty));
+    issue(OrderKind.Build, buildPayload(ids[0], placing.id, tx, ty));
     setPlacing(null);
   }
 
   function issueTrain(buildingId: number, unitDef: number): void {
-    world.order(LOCAL_PLAYER, OrderKind.Train, trainPayload(buildingId, unitDef));
+    issue(OrderKind.Train, trainPayload(buildingId, unitDef));
   }
 
   function issueAgeUp(era: number): void {
-    world.order(LOCAL_PLAYER, OrderKind.AgeUp, eraPayload(era));
+    issue(OrderKind.AgeUp, eraPayload(era));
   }
 
   function issueResearch(tech: number): void {
-    world.order(LOCAL_PLAYER, OrderKind.Research, researchPayload(tech));
+    issue(OrderKind.Research, researchPayload(tech));
   }
 
   function issueStop(): void {
     const ids = selection.toArray();
     if (ids.length === 0) return;
-    world.order(LOCAL_PLAYER, OrderKind.Stop, stopPayload(ids));
+    issue(OrderKind.Stop, stopPayload(ids));
   }
 
   // selectedUnits returns the live local-player units in the selection.
@@ -305,7 +362,7 @@ try {
   function issueAttack(target: UnitRec): void {
     const ids = selectedUnits().map((u) => u.id);
     if (ids.length === 0) return;
-    world.order(LOCAL_PLAYER, OrderKind.Attack, attackPayload(ids, target.id));
+    issue(OrderKind.Attack, attackPayload(ids, target.id));
   }
 
   function issuePatrol(tile: number): void {
@@ -313,7 +370,7 @@ try {
     if (ids.length === 0) return;
     const tx = tile % size;
     const ty = Math.floor(tile / size);
-    world.order(LOCAL_PLAYER, OrderKind.Patrol, patrolPayload(ids, tx * 16 + 8, ty * 16 + 8));
+    issue(OrderKind.Patrol, patrolPayload(ids, tx * 16 + 8, ty * 16 + 8));
   }
 
   // enemyUnitAt finds a visible hostile (players or wildlife) near a point.
@@ -787,7 +844,7 @@ try {
 
   const loop = new FixedStepLoop(
     () => {
-      world.step();
+      if (!session) world.step();
       commitSnapshot();
     },
     () => {

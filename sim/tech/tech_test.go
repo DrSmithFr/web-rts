@@ -31,7 +31,7 @@ func TestEmbeddedTree(t *testing.T) {
 
 func TestParseRejectsBrokenTrees(t *testing.T) {
 	cases := map[string]string{
-		"empty":       `{"techs":[]}`,
+		"empty": `{"techs":[]}`,
 		"forward req": `{"techs":[
 			{"id":2,"key":"b","era":1,"building":4,"ticks":10,"effects":[{"field":"dmg","class":2,"value":1}],"requires":[9]},
 			{"id":1,"key":"a","era":1,"building":4,"ticks":10,"effects":[{"field":"dmg","class":2,"value":1}]}]}`,

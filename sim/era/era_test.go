@@ -38,10 +38,10 @@ func TestEmbeddedLadder(t *testing.T) {
 
 func TestParseRejectsBrokenLadders(t *testing.T) {
 	cases := map[string]string{
-		"missing era":   `{"eras":[{"id":0,"key":"a","ageTicks":0}]}`,
-		"out of order":  `{"eras":[{"id":1,"key":"a","ageTicks":1,"reqBuilding":3},{"id":0,"key":"b","ageTicks":0},{}]}`,
-		"paid start":    `{"eras":[{"id":0,"key":"a","costFood":5,"ageTicks":0},{}]}`,
-		"no req bld":    `{"eras":[{"id":0,"key":"a","ageTicks":0},{"id":1,"key":"b","costFood":1,"ageTicks":10}]}`,
+		"missing era":  `{"eras":[{"id":0,"key":"a","ageTicks":0}]}`,
+		"out of order": `{"eras":[{"id":1,"key":"a","ageTicks":1,"reqBuilding":3},{"id":0,"key":"b","ageTicks":0},{}]}`,
+		"paid start":   `{"eras":[{"id":0,"key":"a","costFood":5,"ageTicks":0},{}]}`,
+		"no req bld":   `{"eras":[{"id":0,"key":"a","ageTicks":0},{"id":1,"key":"b","costFood":1,"ageTicks":10}]}`,
 	}
 	for name, raw := range cases {
 		if _, err := Parse([]byte(raw)); err == nil {
