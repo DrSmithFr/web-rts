@@ -99,6 +99,14 @@ func (h *Hub) dispatch(c *client, m wire.ClientMsg) {
 	case "join":
 		h.join(c, m)
 	case "start":
+		if m.Difficulty != "" {
+			room := c.room(h)
+			if room != nil {
+				room.mu.Lock()
+				room.difficulty = m.Difficulty
+				room.mu.Unlock()
+			}
+		}
 		h.start(c)
 	case "order":
 		h.order(c, m)

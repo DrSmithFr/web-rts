@@ -465,3 +465,38 @@ func TestRelicVictoryVsBots(t *testing.T) {
 	}
 	t.Fatal("no victory before deadline")
 }
+
+// TestBotsHostedOnServer runs a room whose bot slots are driven by the
+// sim brains: a mirror client (sending no orders) must hash-match the
+// server every tick, and the log must carry real bot orders.
+func TestBotsHostedOnServer(t *testing.T) {
+	if testing.Short() {
+		t.Skip("long game")
+	}
+	url, done := newTestHub(t)
+	defer done()
+	c := dial(t, url, "host")
+	c.send(wire.ClientMsg{Type: "create", Name: "Host", Seed: iptr64(0x5eed), Bots: iptr(2)})
+	c.expect("welcome", 5*time.Second)
+	c.send(wire.ClientMsg{Type: "start", Difficulty: "standard"})
+	st := c.expect("start", 5*time.Second)
+	if len(st.Players) != 3 {
+		t.Fatalf("players = %d, want 3", len(st.Players))
+	}
+	m := newMirror(*st.Seed, len(st.Players))
+	botOrders := 0
+	for m.tick < 3000 {
+		tk := c.expect("tick", 60*time.Second)
+		m.stepMsg(tk)
+		good := strconv.FormatUint(m.w.Hash(), 10)
+		c.send(wire.ClientMsg{Type: "hash", Tick: tk.Tick, Hash: &good})
+		for _, o := range tk.Orders {
+			if o.Player > 0 {
+				botOrders++
+			}
+		}
+	}
+	if botOrders == 0 {
+		t.Fatal("no bot orders seen on the wire")
+	}
+}

@@ -101,9 +101,10 @@ try {
     });
     if (params.get('create') !== null) {
       session.create(params.get('name') || 'Player', Number(params.get('bots') ?? 0));
-      if (params.get('autostart') !== null) session.start();
+      const diff = params.get('difficulty') || undefined;
+      if (params.get('autostart') !== null) session.start(diff);
       const after = Number(params.get('startafter') ?? '');
-      if (after > 0) setTimeout(() => session?.start(), after);
+      if (after > 0) setTimeout(() => session?.start(diff), after);
     } else {
       session.join(
         params.get('code') || sessionStorage.getItem('rts.code') || '',

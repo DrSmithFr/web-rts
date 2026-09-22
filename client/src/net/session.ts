@@ -91,8 +91,8 @@ export class NetSession {
     this.send({ t: 'join', code, name, token });
   }
 
-  start(): void {
-    this.send({ t: 'start' });
+  start(difficulty?: string): void {
+    this.send({ t: 'start', difficulty });
   }
 
   sendOrder(kind: number, payload: Uint8Array): void {
