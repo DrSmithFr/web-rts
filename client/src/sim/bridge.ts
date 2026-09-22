@@ -80,12 +80,29 @@ export class SimWorld {
     readonly id: number,
   ) {}
 
-  static create(sim: RawSim, seed: number): SimWorld {
-    return new SimWorld(sim, sim.newWorld(seed));
+  static create(sim: RawSim, seed: string | number, players?: number): SimWorld {
+    return new SimWorld(sim, players ? sim.newWorld(seed, players) : sim.newWorld(seed));
   }
 
   step(): void {
     this.sim.step(this.id);
+  }
+
+  stepWith(orders: { player: number; kind: number; payload: Uint8Array }[]): void {
+    let len = 2;
+    for (const o of orders) len += 5 + o.payload.length;
+    const buf = new Uint8Array(len);
+    const dv = new DataView(buf.buffer);
+    dv.setUint16(0, orders.length, true);
+    let off = 2;
+    for (const o of orders) {
+      dv.setUint8(off, o.player);
+      dv.setUint16(off + 1, o.kind, true);
+      dv.setUint16(off + 3, o.payload.length, true);
+      buf.set(o.payload, off + 5);
+      off += 5 + o.payload.length;
+    }
+    this.sim.stepWith(this.id, buf);
   }
 
   order(player: number, kind: number, payload?: Uint8Array): void {

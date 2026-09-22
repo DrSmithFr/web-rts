@@ -1,9 +1,10 @@
 // Raw surface registered by the Go WebAssembly module on globalThis.RTSSim.
 export interface RawSim {
   version(): string;
-  newWorld(seed?: number): number;
+  newWorld(seed?: string | number, players?: number): number;
   order(id: number, player: number, kind: number, payload?: Uint8Array): void;
   step(id: number): void;
+  stepWith(id: number, buf: Uint8Array): void;
   tick(id: number): number;
   hashHex(id: number): string;
   seed(id: number): number;

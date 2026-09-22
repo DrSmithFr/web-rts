@@ -15,7 +15,7 @@ else
 DETCHECK := ./bin/detcheck
 endif
 
-.PHONY: all vendor wasm test test-sim test-det test-parity test-client test-func test-e2e dev fmt vet run-det clean
+.PHONY: all vendor wasm test test-sim test-det test-parity test-client test-func test-e2e dev fmt vet run-det run-server clean
 
 all: wasm
 
@@ -64,7 +64,7 @@ test-client: client/node_modules
 	npm --prefix client run test
 
 test-func:
-	@echo func tests: websocket scenarios land in phase 7, skipped
+	go test ./server/ -count=1
 
 test-e2e:
 	@echo e2e tests: playwright lands in phase 8, skipped
@@ -78,6 +78,12 @@ run-det: bin/detcheck
 bin/detcheck: $(wildcard tools/detcheck/*.go) $(wildcard sim/*/*.go)
 	node tools/fsutil.mjs mkdir bin
 	$(GO) build -trimpath -o bin/detcheck ./tools/detcheck
+
+bin/rts-server: server/*.go server/wire/*.go
+	go build -o bin/rts-server ./server/cmd
+
+run-server: bin/rts-server
+	./bin/rts-server
 
 dev: wasm vendor client/node_modules
 	npm --prefix client run dev
