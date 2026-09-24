@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   attackPayload,
+  repairPayload,
   eraPayload,
   researchPayload,
   buildPayload,
@@ -64,8 +65,12 @@ function encode(kind: string, args: string): Uint8Array {
       return parts.length === 2 ? trainPayload(parts[0], parts[1]) : trainPayload(parts[0]);
     }
     case 'attack': {
-      const [idsPart, target] = args.split(':');
-      return attackPayload(idsPart.split(';').map(Number), Number(target));
+      const [idsPart, target, kind] = args.split(':');
+      return attackPayload(idsPart.split(';').map(Number), Number(target), Number(kind));
+    }
+    case 'repair': {
+      const [idsPart, building] = args.split(':');
+      return repairPayload(idsPart.split(';').map(Number), Number(building));
     }
     case 'patrol': {
       const [idsPart, xy] = args.split(':');

@@ -1,8 +1,10 @@
 import type {
+  BiomeDefJson,
   BuildingDefJson,
   EraDefJson,
   RawSim,
   TechDefJson,
+  TreeDefJson,
   UnitDefJson,
 } from './loader';
 
@@ -23,6 +25,8 @@ export interface UnitRec {
 export interface NodeRec {
   id: number;
   kind: number;
+  // tree is the species byte (sim/tree ids, 0 = not a tree species).
+  tree: number;
   amount: number;
   x: number;
   y: number;
@@ -70,6 +74,8 @@ export type BuildingDef = BuildingDefJson;
 export type UnitDef = UnitDefJson;
 export type EraDef = EraDefJson;
 export type TechDef = TechDefJson;
+export type BiomeDef = BiomeDefJson;
+export type TreeDef = TreeDefJson;
 
 // SimWorld is a typed handle on one simulation instance inside the wasm
 // module. All gameplay numbers come from the simulation; the bridge only
@@ -137,6 +143,10 @@ export class SimWorld {
     return this.sim.mapTiles(this.id);
   }
 
+  mapBiomes(): Uint8Array {
+    return this.sim.mapBiomes(this.id);
+  }
+
   // vertexHeights decodes the (size+1)^2 whole-number vertex heights.
   vertexHeights(): Uint16Array {
     const raw = this.sim.mapHeights(this.id);
@@ -194,6 +204,7 @@ export class SimWorld {
       out.push({
         id: v.getUint32(o, true),
         kind: raw[o + 4],
+        tree: raw[o + 15],
         amount: v.getUint16(o + 5, true),
         x: v.getUint16(o + 7, true) / 16,
         y: v.getUint16(o + 9, true) / 16,
@@ -247,6 +258,14 @@ export class SimWorld {
 
   eras(): EraDef[] {
     return this.sim.eras(this.id);
+  }
+
+  biomeDefs(): BiomeDef[] {
+    return this.sim.biomeDefs(this.id);
+  }
+
+  treeDefs(): TreeDef[] {
+    return this.sim.treeDefs(this.id);
   }
 
   techDefs(): TechDef[] {

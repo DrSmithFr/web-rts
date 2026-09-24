@@ -2,15 +2,20 @@ import * as THREE from 'three';
 
 import { FogVisible, groundTint, type FogView } from './fogView';
 import { buildTerrainMesh } from './terrainMesh';
+import { buildWaterWindow, makeWaterMaterial, waterLevelY, waterUniforms } from './water';
+import { buildScatterWindow } from './scatter';
 
 // GroundChunks splits the map into CHUNK-tile squares, one mesh each, so
 // fog repaints and frustum culling stay local. Vertex colors bake the fog
-// state per corner tile.
+// state per corner tile. Each chunk also carries a translucent water
+// surface (shared animated material) and merged decor scatter.
 
 export const CHUNK = 32;
 
 interface Chunk {
   mesh: THREE.Mesh;
+  water: THREE.Mesh | null;
+  decor: THREE.Mesh | null;
   x0: number;
   y0: number;
   x1: number;
@@ -23,22 +28,46 @@ export class GroundChunks {
   readonly group = new THREE.Group();
   readonly meshes: THREE.Mesh[] = [];
   private readonly chunks: Chunk[] = [];
+  private readonly waterMat: THREE.MeshPhongMaterial;
+  private readonly decorMat: THREE.MeshLambertMaterial;
+  private readonly uniforms = waterUniforms();
 
   constructor(
     size: number,
     tiles: Uint8Array,
     heights: Uint16Array,
+    blocked?: Set<number>,
+    biomes?: Uint8Array,
   ) {
+    this.waterMat = makeWaterMaterial(this.uniforms);
+    this.decorMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+    const seaY = waterLevelY(size, tiles, heights);
+
     for (let y0 = 0; y0 < size; y0 += CHUNK) {
       for (let x0 = 0; x0 < size; x0 += CHUNK) {
         const w = Math.min(CHUNK, size - x0);
         const h = Math.min(CHUNK, size - y0);
-        const mesh = buildTerrainMesh(size, tiles, heights, { x0, y0, w, h });
+        const mesh = buildTerrainMesh(size, tiles, heights, { x0, y0, w, h, biomes });
         const geo = mesh.geometry;
         const color = geo.getAttribute('color');
         const base = Float32Array.from(color.array as Float32Array);
+
+        let water: THREE.Mesh | null = null;
+        const waterGeo = buildWaterWindow(size, tiles, { x0, y0, w, h }, seaY);
+        if (waterGeo) {
+          water = new THREE.Mesh(waterGeo, this.waterMat);
+          water.renderOrder = 1;
+        }
+        let decor: THREE.Mesh | null = null;
+        const decorGeo = buildScatterWindow(size, tiles, heights, { x0, y0, w, h }, blocked);
+        if (decorGeo) {
+          decor = new THREE.Mesh(decorGeo, this.decorMat);
+        }
+
         const chunk: Chunk = {
           mesh,
+          water,
+          decor,
           x0,
           y0,
           x1: x0 + w,
@@ -49,8 +78,15 @@ export class GroundChunks {
         this.chunks.push(chunk);
         this.meshes.push(mesh);
         this.group.add(mesh);
+        if (water) this.group.add(water);
+        if (decor) this.group.add(decor);
       }
     }
+  }
+
+  // setTime drives the shared water ripple clock.
+  setTime(seconds: number): void {
+    this.uniforms.time.value = seconds;
   }
 
   // setFog repaints only chunks whose corner fog states changed.
@@ -109,7 +145,10 @@ export class GroundChunks {
     );
     frustum.setFromProjectionMatrix(proj);
     for (const c of this.chunks) {
-      c.mesh.visible = frustum.intersectsObject(c.mesh);
+      const hit = frustum.intersectsObject(c.mesh);
+      c.mesh.visible = hit;
+      if (c.water) c.water.visible = hit;
+      if (c.decor) c.decor.visible = frustum.intersectsObject(c.decor);
     }
   }
 }

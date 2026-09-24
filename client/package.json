@@ -19,6 +19,7 @@
   },
   "private": true,
   "dependencies": {
-    "three": "^0.186.0"
+    "three": "^0.186.0",
+    "tone": "^15.1.22"
   }
 }

@@ -8,6 +8,15 @@
     <style>
       :root {
         color-scheme: dark;
+        --ink: rgba(13, 16, 24, 0.82);
+        --ink-solid: #12151f;
+        --line: rgba(202, 168, 79, 0.32);
+        --line-soft: rgba(148, 160, 190, 0.16);
+        --brass: #caa84f;
+        --brass-hi: #f2e3b0;
+        --text: #d9dfe9;
+        --dim: #8a93a6;
+        --panel-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
         font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
       }
       html,
@@ -15,155 +24,335 @@
         margin: 0;
         overflow: hidden;
         background: #10131a;
-        color: #d7dce6;
+        color: var(--text);
       }
       #gl {
         position: fixed;
         inset: 0;
         display: block;
       }
+
+      /* --- top-left status ------------------------------------------------ */
       #hud {
         position: fixed;
         top: 12px;
         left: 12px;
-        padding: 10px 14px;
-        background: rgba(10, 12, 18, 0.8);
-        border: 1px solid #2c3345;
-        border-radius: 6px;
-        font-size: 14px;
-        line-height: 1.5;
+        padding: 8px 12px;
+        background: var(--ink);
+        border: 1px solid var(--line-soft);
+        border-radius: 10px;
+        font-size: 12px;
+        line-height: 1.55;
         user-select: none;
+        backdrop-filter: blur(6px);
+        box-shadow: var(--panel-shadow);
+        color: var(--dim);
+        font-variant-numeric: tabular-nums;
       }
       #hud .dim {
-        color: #8a93a6;
+        color: #6f7990;
       }
+      #hud b {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      /* --- hover chip ----------------------------------------------------- */
       #hover {
         position: fixed;
-        bottom: 12px;
+        bottom: 202px;
         left: 12px;
-        padding: 6px 10px;
-        background: rgba(10, 12, 18, 0.8);
-        border: 1px solid #2c3345;
-        border-radius: 6px;
-        font-size: 13px;
+        padding: 6px 11px;
+        background: var(--ink);
+        border: 1px solid var(--line-soft);
+        border-radius: 8px;
+        font-size: 12px;
         visibility: hidden;
         user-select: none;
+        pointer-events: none;
+        backdrop-filter: blur(6px);
+        color: var(--brass-hi);
+      }
+      .floater {
+        position: fixed;
+        z-index: 30;
+        pointer-events: none;
+        font: 600 13px system-ui, sans-serif;
+        text-shadow:
+          0 1px 2px rgba(0, 0, 0, 0.9),
+          0 0 6px rgba(0, 0, 0, 0.5);
+        will-change: transform, opacity;
       }
       #selrect {
         position: fixed;
-        border: 1px solid #ffffff;
-        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(242, 227, 176, 0.9);
+        background: rgba(202, 168, 79, 0.12);
         display: none;
         pointer-events: none;
+        border-radius: 2px;
       }
+
+      /* --- resource bar --------------------------------------------------- */
       #resbar {
         position: fixed;
         top: 12px;
         left: 50%;
         transform: translateX(-50%);
-        padding: 8px 16px;
-        background: rgba(10, 12, 18, 0.8);
-        border: 1px solid #2c3345;
-        border-radius: 6px;
-        font-size: 14px;
+        padding: 7px 14px;
+        background: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        font-size: 13px;
         display: none;
-        gap: 18px;
+        align-items: center;
+        gap: 16px;
         user-select: none;
+        backdrop-filter: blur(6px);
+        box-shadow: var(--panel-shadow);
+        font-variant-numeric: tabular-nums;
       }
-      #resbar .k {
-        color: #8a93a6;
+      #resbar .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
       }
+      #resbar .chip svg {
+        display: block;
+      }
+      #resbar .val {
+        color: var(--text);
+        min-width: 2ch;
+        transition: color 0.4s;
+      }
+      #resbar .val.bump {
+        color: var(--brass-hi);
+      }
+      #resbar .divider {
+        width: 1px;
+        height: 16px;
+        background: var(--line-soft);
+      }
+      #erapips {
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }
+      #erapips i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #2a3040;
+        border: 1px solid var(--line-soft);
+        transition: background 0.3s, box-shadow 0.3s;
+      }
+      #erapips i.on {
+        background: var(--brass);
+        box-shadow: 0 0 6px rgba(202, 168, 79, 0.7);
+      }
+      #res-era {
+        color: var(--brass);
+        font-size: 11px;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+      }
+
+      /* --- command panel -------------------------------------------------- */
       #panel {
         position: fixed;
         bottom: 12px;
         right: 12px;
-        min-width: 220px;
-        padding: 10px 14px;
-        background: rgba(10, 12, 18, 0.85);
-        border: 1px solid #2c3345;
-        border-radius: 6px;
+        width: 264px;
+        padding: 12px 14px;
+        background: var(--ink);
+        border: 1px solid var(--line-soft);
+        border-radius: 12px;
         font-size: 13px;
         line-height: 1.5;
         display: none;
         user-select: none;
+        backdrop-filter: blur(8px);
+        box-shadow: var(--panel-shadow);
+        animation: slide-up 0.18s ease-out;
+      }
+      @keyframes slide-up {
+        from {
+          transform: translateY(8px);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
       }
       #panel .dim {
-        color: #8a93a6;
+        color: var(--dim);
+        font-size: 12px;
+      }
+      #panel .title {
+        color: var(--brass-hi);
+        font-size: 12px;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--line-soft);
       }
       #panel .row {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        margin-top: 6px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      #panel .row.one {
+        grid-template-columns: 1fr;
       }
       #panel button {
         font: inherit;
-        color: #d7dce6;
-        background: #1d2433;
-        border: 1px solid #38425a;
-        border-radius: 4px;
-        padding: 4px 8px;
+        font-size: 12px;
+        color: var(--text);
+        background: #1a2030;
+        border: 1px solid var(--line-soft);
+        border-radius: 7px;
+        padding: 7px 8px;
         cursor: pointer;
+        text-align: left;
+        transition: border-color 0.15s, background 0.15s, transform 0.1s;
       }
-      #panel button:hover {
-        background: #29334a;
+      #panel button:hover:not(:disabled) {
+        background: #232b40;
+        border-color: var(--brass);
+        transform: translateY(-1px);
+      }
+      #panel button:active:not(:disabled) {
+        transform: translateY(0);
       }
       #panel button:disabled {
-        opacity: 0.45;
+        opacity: 0.4;
         cursor: default;
       }
+      #panel button.gold {
+        border-color: var(--brass);
+        background: linear-gradient(180deg, #3a3118, #2a2413);
+        color: var(--brass-hi);
+      }
+      #panel button .cost-ico {
+        vertical-align: -2px;
+        margin: 0 2px 0 7px;
+      }
+      #panel button .cost-ico + .cost-ico {
+        margin-left: 6px;
+      }
+      #panel .bar {
+        height: 5px;
+        border-radius: 3px;
+        background: #1c2230;
+        overflow: hidden;
+        margin: 4px 0 2px;
+        border: 1px solid var(--line-soft);
+      }
+      #panel .bar i {
+        display: block;
+        height: 100%;
+        background: linear-gradient(90deg, #caa84f, #f2e3b0);
+        border-radius: 3px;
+        transition: width 0.25s;
+      }
+      #panel .bar.blue i {
+        background: linear-gradient(90deg, #4f7fd9, #9fc2f2);
+      }
+
+      /* --- minimap -------------------------------------------------------- */
       #minimapbox {
         position: fixed;
         bottom: 12px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(10, 12, 18, 0.85);
-        border: 1px solid #2c3345;
-        border-radius: 6px;
-        padding: 4px;
+        left: 12px;
+        background: var(--ink-solid);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 5px;
         display: none;
         line-height: 0;
         user-select: none;
+        box-shadow: var(--panel-shadow), inset 0 0 0 1px rgba(0, 0, 0, 0.6);
       }
       #minimap {
-        border-radius: 4px;
+        border-radius: 8px;
         cursor: crosshair;
       }
+
+      /* --- net status pill ------------------------------------------------ */
       #netstatus {
         position: fixed;
-        top: 10px;
+        top: 12px;
         left: 50%;
-        transform: translateX(-50%);
-        padding: 5px 12px;
-        background: rgba(10, 12, 18, 0.85);
-        border: 1px solid #3c4658;
-        border-radius: 6px;
+        transform: translate(-50%, 0);
+        padding: 6px 16px;
+        background: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 999px;
         font-size: 12px;
         color: #9fd8a8;
         user-select: none;
+        backdrop-filter: blur(6px);
+        animation: slide-down 0.25s ease-out;
+        max-width: 60vw;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      @keyframes slide-down {
+        from {
+          transform: translate(-50%, -18px);
+          opacity: 0;
+        }
+        to {
+          transform: translate(-50%, 0);
+          opacity: 1;
+        }
       }
       #netstatus.err {
         color: #ff9d8a;
         border-color: #7a3b34;
       }
+
+      /* --- victory --------------------------------------------------------- */
       #victory {
         position: fixed;
-        top: 42%;
+        top: 40%;
         left: 50%;
         transform: translate(-50%, -50%);
-        padding: 18px 34px;
-        background: rgba(10, 12, 18, 0.92);
-        border: 1px solid #caa84f;
-        border-radius: 8px;
-        font-size: 22px;
-        color: #f2e3b0;
+        padding: 26px 48px;
+        background: radial-gradient(ellipse at center, rgba(30, 24, 10, 0.96) 0%, rgba(10, 12, 18, 0.94) 100%);
+        border: 1px solid var(--brass);
+        border-radius: 14px;
+        font-size: 26px;
+        letter-spacing: 3px;
+        color: var(--brass-hi);
+        text-align: center;
         display: none;
         user-select: none;
+        box-shadow: 0 0 60px rgba(202, 168, 79, 0.35), var(--panel-shadow);
+        animation: pop-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
       }
+      @keyframes pop-in {
+        from {
+          transform: translate(-50%, -50%) scale(0.8);
+          opacity: 0;
+        }
+        to {
+          transform: translate(-50%, -50%) scale(1);
+          opacity: 1;
+        }
+      }
+
+      /* --- menu ------------------------------------------------------------ */
       #menu {
         position: fixed;
         inset: 0;
-        background: radial-gradient(ellipse at center, #141a2a 0%, #070910 100%);
+        background:
+          radial-gradient(ellipse 60% 50% at 50% 30%, rgba(64, 52, 22, 0.55) 0%, transparent 70%),
+          radial-gradient(ellipse at center, #141a2a 0%, #070910 100%);
         color: #e8dfc0;
         display: flex;
         align-items: center;
@@ -172,23 +361,75 @@
         font: 15px system-ui, sans-serif;
       }
       /* display:flex above overrides the hidden attribute's UA rule */
-      #menu[hidden] { display: none; }
-      #menu .mscreen { width: 320px; text-align: center; }
-      #menu .mtitle { font-size: 30px; letter-spacing: 4px; color: #caa84f; margin-bottom: 22px; }
+      #menu[hidden] {
+        display: none;
+      }
+      #menu .mscreen {
+        width: 360px;
+        text-align: center;
+        padding: 30px 34px;
+        background: rgba(16, 20, 32, 0.72);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+        animation: slide-up 0.25s ease-out;
+      }
+      #menu .mtitle {
+        font-size: 32px;
+        letter-spacing: 8px;
+        color: var(--brass);
+        text-shadow: 0 0 24px rgba(202, 168, 79, 0.45);
+        margin-bottom: 26px;
+      }
       #menu .mbtn {
-        display: block; width: 100%; margin: 8px 0; padding: 10px;
-        background: #1b2438; color: #e8dfc0; border: 1px solid #3a4a6d;
-        border-radius: 5px; font-size: 15px; cursor: pointer;
+        display: block;
+        width: 100%;
+        margin: 9px 0;
+        padding: 12px;
+        background: #1b2438;
+        color: #e8dfc0;
+        border: 1px solid #3a4a6d;
+        border-radius: 9px;
+        font-size: 15px;
+        cursor: pointer;
+        transition: background 0.15s, border-color 0.15s, transform 0.12s;
       }
-      #menu .mbtn:hover { background: #27324e; border-color: #caa84f; }
-      #menu .mbtn.ghost { background: transparent; color: #9aa7c4; }
-      #menu .mrow { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
-      #menu .mrow label { flex: 0 0 110px; text-align: right; color: #9aa7c4; }
-      #menu .mrow select, #menu .mrow input {
-        flex: 1; padding: 7px; background: #10182a; color: #e8dfc0;
-        border: 1px solid #3a4a6d; border-radius: 4px;
+      #menu .mbtn:hover {
+        background: #27324e;
+        border-color: var(--brass);
+        transform: translateY(-1px);
       }
-      #menu .mline { margin: 6px 0; color: #b9c2d8; }
+      #menu .mbtn.ghost {
+        background: transparent;
+        color: #9aa7c4;
+        border-color: transparent;
+      }
+      #menu .mrow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 10px 0;
+      }
+      #menu .mrow label {
+        flex: 0 0 110px;
+        text-align: right;
+        color: #9aa7c4;
+        font-size: 13px;
+      }
+      #menu .mrow select,
+      #menu .mrow input {
+        flex: 1;
+        padding: 8px;
+        background: #10182a;
+        color: #e8dfc0;
+        border: 1px solid #3a4a6d;
+        border-radius: 7px;
+      }
+      #menu .mline {
+        margin: 8px 0;
+        color: #b9c2d8;
+      }
     </style>
   </head>
   <body>
@@ -196,23 +437,48 @@
     <div id="hud">
       <div id="status" class="dim">initializing</div>
       <div id="stats" hidden>
-        <div><span class="dim">tick</span> <span id="tick">0</span></div>
-        <div><span class="dim">hash</span> <span id="hash">0000000000000000</span></div>
-        <div><span class="dim">map</span> <span id="map">—</span></div>
-        <div><span class="dim">fps</span> <span id="fps">0</span></div>
-        <div><span class="dim">selected</span> <span id="selected">0</span></div>
-      <div id="netstatus" hidden></div>
+        <div><span class="dim">tick</span> <b id="tick">0</b> <span class="dim">fps</span> <b id="fps">0</b></div>
+        <div><span class="dim">hash</span> <b id="hash">0000000000000000</b></div>
+        <div><span class="dim">map</span> <b id="map">—</b> <span class="dim">sel</span> <b id="selected">0</b></div>
+      </div>
     </div>
+    <div id="netstatus" hidden></div>
     <div id="hover"></div>
     <div id="selrect"></div>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-wood" viewBox="0 0 16 16"><rect x="2" y="5" width="12" height="6" rx="1.4" fill="#8a6a42"/><circle cx="5.2" cy="8" r="2" fill="#c9a06a"/><path d="M5.2 8 m-0.7 0 a0.7 0.7 0 1 0 1.4 0" stroke="#8a6a42" fill="none"/></symbol>
+      <symbol id="i-stone" viewBox="0 0 16 16"><path d="M3 11 L4 6 L8 4 L13 6 L13 11 Z" fill="#8d949e"/><path d="M4 6 L8 4 L9 11 L3 11 Z" fill="#787f88"/></symbol>
+      <symbol id="i-food" viewBox="0 0 16 16"><circle cx="8" cy="9.4" r="4.6" fill="#c0396b"/><path d="M8 5 q0.5 -2 2.5 -2.4 q-0.4 1.9 -2.5 2.4 Z" fill="#589f44"/></symbol>
+      <symbol id="i-gold" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.4" fill="#f1c40f"/><circle cx="8" cy="8" r="3.2" fill="#caa84f"/><circle cx="8" cy="8" r="1.2" fill="#f1c40f"/></symbol>
+    </svg>
     <div id="resbar">
-      <span><span class="k">W</span> <span id="res-wood">0</span></span>
-      <span><span class="k">S</span> <span id="res-stone">0</span></span>
-      <span><span class="k">F</span> <span id="res-food">0</span></span>
-      <span><span class="k">G</span> <span id="res-gold">0</span></span>
-      <span><span class="k">pop</span> <span id="res-pop">0/0</span></span>
-      <span><span class="k">era</span> <span id="res-era">—</span></span>
-      <span><span class="k">relics</span> <span id="res-relics">0</span></span>
+      <span class="chip" id="chip-wood">
+        <svg width="14" height="14"><use href="#i-wood"/></svg>
+        <span class="val" id="res-wood">0</span>
+      </span>
+      <span class="chip" id="chip-stone">
+        <svg width="14" height="14"><use href="#i-stone"/></svg>
+        <span class="val" id="res-stone">0</span>
+      </span>
+      <span class="chip" id="chip-food">
+        <svg width="14" height="14"><use href="#i-food"/></svg>
+        <span class="val" id="res-food">0</span>
+      </span>
+      <span class="chip" id="chip-gold">
+        <svg width="14" height="14"><use href="#i-gold"/></svg>
+        <span class="val" id="res-gold">0</span>
+      </span>
+      <span class="chip" id="chip-pop">
+        <svg width="14" height="14" viewBox="0 0 16 16"><circle cx="6" cy="5" r="2.4" fill="#d9dfe9"/><path d="M2.4 13 q0 -4 3.6 -4 q3.6 0 3.6 4 Z" fill="#d9dfe9"/><circle cx="11.4" cy="6" r="2" fill="#8a93a6"/><path d="M8.8 13 q0.2 -3.2 2.6 -3.2 q2.4 0 2.4 3.2 Z" fill="#8a93a6"/></svg>
+        <span class="val" id="res-pop">0/0</span>
+      </span>
+      <span class="divider"></span>
+      <span id="erapips" title="era"><i></i><i></i><i></i><i></i><i></i></span>
+      <span id="res-era">—</span>
+      <span class="chip" id="chip-relics">
+        <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 1.5 L9.7 6 L14.5 6.2 L10.8 9.2 L12.1 14 L8 11.3 L3.9 14 L5.2 9.2 L1.5 6.2 L6.3 6 Z" fill="#e8c34a"/></svg>
+        <span class="val" id="res-relics">0</span>
+      </span>
     </div>
     <div id="panel"></div>
     <div id="victory"></div>

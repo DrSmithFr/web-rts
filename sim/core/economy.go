@@ -58,6 +58,7 @@ func (w *World) initEconomy() {
 	for _, n := range w.gameMap.Nodes() {
 		_, e := w.nodes.Create()
 		e.Kind = n.Kind
+		e.Tree = n.Tree
 		e.TileX, e.TileY = n.X, n.Y
 		e.X = tileCenter(n.X)
 		e.Y = tileCenter(n.Y)
@@ -82,6 +83,7 @@ func (w *World) initEconomy() {
 				b.Size = def.Size
 				b.HP = BuildingHP
 				w.markOccupied(b)
+				w.clearNodesUnder(tx, ty, def.Size)
 				break
 			}
 		}
@@ -106,6 +108,20 @@ func (w *World) inBounds(x, y int32) bool {
 
 // footprintFree checks a size x size area for bounds, terrain and any
 // already-placed building (construction sites block too).
+// clearNodesUnder frees resource nodes covered by a starting building's
+// footprint, so bases never spawn on top of trees or berries.
+func (w *World) clearNodesUnder(tx, ty, size int32) {
+	var dead []entity.ID
+	w.nodes.Each(func(id entity.ID, n *Node) {
+		if n.TileX >= tx && n.TileX < tx+size && n.TileY >= ty && n.TileY < ty+size {
+			dead = append(dead, id)
+		}
+	})
+	for _, id := range dead {
+		w.nodes.Free(id)
+	}
+}
+
 func (w *World) footprintFree(tx, ty, size int32) bool {
 	for dy := int32(0); dy < size; dy++ {
 		for dx := int32(0); dx < size; dx++ {
@@ -409,16 +425,74 @@ func (w *World) applyGather(player uint8, p []byte) bool {
 	unit := entity.ID(r.Uvarint())
 	node := entity.ID(r.Uvarint())
 	if u := w.units.Get(unit); u != nil && u.Owner == player {
+		if u.Kind != KindVillager {
+			return true // only villagers harvest; soldiers fight
+		}
 		if n := w.nodes.Get(node); n != nil && n.Kind.Harvestable() && n.Amount > 0 {
+			if w.speciesGated(n) && !w.hasSawmill(u.Owner) {
+				return true // well-formed but not allowed yet: no-op
+			}
 			if u.Carried > 0 && u.CarriedK != n.Kind {
 				u.Carried = 0 // dropping a different cargo is acceptable
 			}
 			u.CarriedK = n.Kind
 			u.Target = node
+			u.AttackTarget = entity.Nil // a gather order drops the hunt
+			u.AttackKind = 0
 			u.State = UnitGather
 		}
 	}
 	return r.OK()
+}
+
+// speciesGated reports whether a node's tree species (baobab) requires a
+// completed sawmill before it may be chopped.
+func (w *World) speciesGated(n *Node) bool {
+	d := w.species.Get(n.Tree)
+	return d != nil && d.Sawmill
+}
+
+// hasSawmill reports whether the owner has a completed sawmill.
+func (w *World) hasSawmill(owner uint8) bool {
+	found := false
+	w.buildings.Each(func(_ entity.ID, b *Building) {
+		if b.Owner == owner && b.DefID == BldSawmill && b.Progress == 0 {
+			found = true
+		}
+	})
+	return found
+}
+
+// applyRepair assigns villagers to an interrupted construction. Only
+// villagers build, and only buildings of one's own that are still
+// unfinished (Progress > 0) accept workers.
+func (w *World) applyRepair(player uint8, p []byte) bool {
+	r := orders.NewReader(p)
+	n := int(r.Uvarint())
+	if n == 0 || n > 128 {
+		return false
+	}
+	ids := make([]entity.ID, 0, n)
+	for i := 0; i < n; i++ {
+		ids = append(ids, entity.ID(r.Uvarint()))
+	}
+	target := entity.ID(r.Uvarint())
+	if !r.OK() {
+		return false
+	}
+	b := w.buildings.Get(target)
+	if b == nil || b.Owner != player || b.Progress <= 0 {
+		return true // well-formed order at a finished building: no-op
+	}
+	for _, id := range ids {
+		u := w.units.Get(id)
+		if u == nil || u.Owner != player || u.Kind != KindVillager {
+			continue
+		}
+		u.State = UnitBuild
+		u.Target = target
+	}
+	return true
 }
 
 func (w *World) applyBuild(player uint8, p []byte) bool {
@@ -474,6 +548,7 @@ func (w *World) applyStop(player uint8, p []byte) bool {
 			u.State = UnitIdle
 			u.Target = entity.Nil
 			u.AttackTarget = entity.Nil
+			u.AttackKind = 0
 		}
 	}
 	return r.OK()
@@ -529,6 +604,36 @@ func (w *World) updateUnits() {
 		case UnitGather:
 			n := w.nodes.Get(u.Target)
 			if n == nil || n.Amount <= 0 {
+				kind := u.CarriedK
+				var tree uint8
+				corpse := false
+				if n != nil {
+					tree = n.Tree
+					corpse = n.Corpse
+				}
+				next := w.chainTarget(u, kind, tree)
+				u.Target = entity.Nil
+				if u.Carried > 0 {
+					u.State = UnitReturn
+					if next != entity.Nil {
+						u.Target = next // deposit, then walk to the next node
+					} else if corpse && kind == resource.Food {
+						// pick the next prey while still beside the carcass
+						u.AttackTarget = w.nearestPrey(u)
+						u.AttackKind = orders.TargetUnit
+					}
+				} else if next != entity.Nil {
+					u.CarriedK = kind
+					u.Target = next
+					u.State = UnitGather
+				} else if corpse && kind == resource.Food && w.chainPrey(u) {
+					// hunter continues the hunt on live prey
+				} else {
+					u.State = UnitIdle
+				}
+				break
+			}
+			if w.speciesGated(n) && !w.hasSawmill(u.Owner) {
 				u.State = UnitIdle
 				u.Target = entity.Nil
 				break
@@ -539,10 +644,32 @@ func (w *World) updateUnits() {
 				}
 				carryCap := resource.CarryCapacity + w.carryBonus(u)
 				room := carryCap - u.Carried
-				amt := min32(resource.GatherRate, n.Amount, room)
+				if n.Tree != 0 {
+					u.GatherAcc += w.treeStep[n.Tree]
+				}
+				amt := resource.GatherRate
+				if n.Tree != 0 {
+					amt = u.GatherAcc >> 16
+					u.GatherAcc -= amt << 16
+				}
+				amt = min32(amt, n.Amount, room)
 				if amt > 0 {
 					n.Amount -= amt
 					u.Carried += amt
+				}
+				if n.Amount <= 0 {
+					// node runs dry: remember the next one of this kind
+					// while the unit still stands beside it
+					if next := w.chainTarget(u, u.CarriedK, n.Tree); next != entity.Nil {
+						u.Target = next
+					} else if n.Corpse {
+						if u.Carried == 0 {
+							w.chainPrey(u)
+						} else {
+							u.AttackTarget = w.nearestPrey(u)
+							u.AttackKind = orders.TargetUnit
+						}
+					}
 				}
 				if u.Carried >= carryCap {
 					u.State = UnitReturn
@@ -561,14 +688,33 @@ func (w *World) updateUnits() {
 			if near(u.X, u.Y, bx, by, WorkRange) {
 				pl := &w.players[u.Owner]
 				pl.Res[u.CarriedK] += u.Carried
+				carryK := u.CarriedK
 				u.Carried = 0
 				u.CarriedK = resource.None
 				n := w.nodes.Get(u.Target)
 				if n != nil && n.Amount > 0 {
+					u.CarriedK = carryK
 					u.State = UnitGather
 				} else {
-					u.State = UnitIdle
+					var tree uint8
+					corpse := false
+					if n != nil {
+						tree = n.Tree
+						corpse = n.Corpse
+					}
 					u.Target = entity.Nil
+					next := w.chainTarget(u, carryK, tree)
+					if next != entity.Nil {
+						u.CarriedK = carryK
+						u.Target = next
+						u.State = UnitGather
+					} else if u.AttackTarget != entity.Nil {
+						u.State = UnitAttack // prey picked beside the carcass
+					} else if corpse && carryK == resource.Food && w.chainPrey(u) {
+						// hunt resumes after the deposit
+					} else {
+						u.State = UnitIdle
+					}
 				}
 			} else {
 				stepToward(&u.X, &u.Y, bx, by, w.speedOf(u))
@@ -674,6 +820,87 @@ func buildingCenter(b *Building) (fixed.F16, fixed.F16) {
 	return x, y
 }
 
+// rechain continues a gatherer whose node ran out: it retargets the
+// nearest still-harvestable node of the same resource kind inside the
+// unit's vision, so villagers chain nearby trees or berries instead of
+// standing idle. Sawmill-gated species are skipped without a sawmill.
+// chainTarget picks the next node for a gatherer whose node ran dry:
+// first the nearest node of the same resource kind AND the same tree
+// species (pine chains pine, palm chains palm), else the nearest node
+// of the same kind of any species. Sawmill-gated species are skipped
+// without a sawmill.
+func (w *World) chainTarget(u *Unit, kind resource.Kind, tree uint8) entity.ID {
+	if kind == resource.None || !kind.Harvestable() || u.Owner >= MaxPlayers {
+		return entity.Nil
+	}
+	ux, uy := tileOf(u.X), tileOf(u.Y)
+	r := int32(w.visionOf(u))
+	var best entity.ID
+	var bestD int32 = 1 << 30
+	for pass := 0; pass < 2; pass++ {
+		sameSpecies := pass == 0
+		w.nodes.Each(func(id entity.ID, n *Node) {
+			if n.Kind != kind || n.Amount <= 0 {
+				return
+			}
+			if sameSpecies && n.Tree != tree {
+				return
+			}
+			if w.speciesGated(n) && !w.hasSawmill(u.Owner) {
+				return
+			}
+			dx, dy := n.TileX-ux, n.TileY-uy
+			d := dx*dx + dy*dy
+			if d <= r*r && d < bestD {
+				bestD, best = d, id
+			}
+		})
+		if best != entity.Nil {
+			return best
+		}
+	}
+	return entity.Nil
+}
+
+// nearestPrey returns the live huntable animal closest to the unit's
+// feet inside its vision, or entity.Nil. Dangerous game (anything that
+// fights back, like boars) is never auto-chained: villagers would walk
+// to their deaths.
+func (w *World) nearestPrey(u *Unit) entity.ID {
+	ux, uy := tileOf(u.X), tileOf(u.Y)
+	r := int32(w.visionOf(u))
+	var best entity.ID
+	var bestD int32 = 1 << 30
+	w.units.Each(func(id entity.ID, a *Unit) {
+		if a.Owner != OwnerNeutral || a.HP <= 0 {
+			return
+		}
+		d := w.udefs.Get(a.DefID)
+		if d == nil || d.CorpseFood <= 0 || d.Attacks() {
+			return
+		}
+		dx, dy := tileOf(a.X)-ux, tileOf(a.Y)-uy
+		dd := dx*dx + dy*dy
+		if dd <= r*r && dd < bestD {
+			bestD, best = dd, id
+		}
+	})
+	return best
+}
+
+// chainPrey continues a hunt: a gatherer that finished a corpse goes
+// back to attacking the nearest live huntable animal in vision.
+func (w *World) chainPrey(u *Unit) bool {
+	prey := w.nearestPrey(u)
+	if prey == entity.Nil {
+		return false
+	}
+	u.AttackTarget = prey
+	u.AttackKind = orders.TargetUnit
+	u.State = UnitAttack
+	return true
+}
+
 func (w *World) nearestDropoff(u *Unit) entity.ID {
 	best := entity.Nil
 	var bestD2 int64 = 1 << 62
@@ -714,6 +941,9 @@ func (w *World) updateBuildings() {
 		if def == nil {
 			return
 		}
+		if def.FarmFoodMilli > 0 && b.Progress == 0 && b.Owner < MaxPlayers && w.players[b.Owner].Active {
+			w.farmTick(b)
+		}
 		pl := &w.players[b.Owner]
 		switch {
 		case b.TrainCur != 0:
@@ -743,6 +973,25 @@ func (w *World) updateBuildings() {
 			}
 		}
 	})
+}
+
+// farmTick produces one farm's food increment for this tick. The base
+// yield comes from the building def and is multiplied by the farm
+// multiplier of the biome under the farm's tile (H1/H2).
+func (w *World) farmTick(b *Building) {
+	def := w.bdefs.Get(b.DefID)
+	yield16 := def.FarmYield16()
+	bi := w.biomeDefs.Get(w.gameMap.BiomeAt(int(b.TileX), int(b.TileY)))
+	mul16 := fixed.F16(1 << 16)
+	if bi != nil {
+		mul16 = bi.FarmMul16()
+	}
+	b.FarmAcc += int32((int64(yield16) * int64(mul16)) >> 16)
+	food := b.FarmAcc >> 16
+	if food > 0 {
+		b.FarmAcc -= food << 16
+		w.players[b.Owner].Res[resource.Food] += food
+	}
 }
 
 // shiftTrainQueue pops the front queue entry.

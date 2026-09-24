@@ -17,6 +17,7 @@ const (
 	Patrol    = 8
 	AgeUp     = 9
 	Research  = 10
+	Repair    = 11
 )
 
 // MoveItem is one unit destination in a group move.
@@ -106,15 +107,31 @@ func MoveGroupPayload(ids []uint32, x16, y16 uint16) []byte {
 	return w.Bytes()
 }
 
-// AttackPayload encodes "group attacks one target entity".
-func AttackPayload(ids []uint32, target uint32) []byte {
+// Target kinds for attack-like orders: entity ids only live per store
+// (units, buildings), so the wire names the store explicitly.
+const (
+	TargetUnit     = 1
+	TargetBuilding = 2
+)
+
+// AttackPayload encodes "group attacks one target entity". kind is
+// TargetUnit or TargetBuilding and names the store the id lives in.
+func AttackPayload(ids []uint32, target uint32, kind uint8) []byte {
 	w := NewWriter()
 	w.Uvarint(uint64(len(ids)))
 	for _, id := range ids {
 		w.Uvarint(uint64(id))
 	}
 	w.Uvarint(uint64(target))
+	w.Uvarint(uint64(kind))
 	return w.Bytes()
+}
+
+// RepairPayload encodes "group of villagers continues one building".
+// It shares the AttackPayload wire format: ids plus one building id
+// with its store kind.
+func RepairPayload(ids []uint32, building uint32) []byte {
+	return AttackPayload(ids, building, TargetBuilding)
 }
 
 // PatrolPayload encodes a group patrol to a tile: each unit ping-pongs

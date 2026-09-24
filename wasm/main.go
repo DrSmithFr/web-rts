@@ -17,6 +17,7 @@
 //	seed(id)              -> world seed (safe up to 2^53)
 //	mapSize(id)           -> tiles per side
 //	mapTiles(id)          -> Uint8Array of tile type bytes, row-major
+//	mapBiomes(id)         -> Uint8Array of biome id bytes, row-major
 //	mapHeights(id)        -> Uint8Array of (size+1)^2 u16 LE vertex heights
 //	mapHashHex(id)        -> map digest, 16 lowercase hex digits
 //	spawnCount(id)        -> number of spawn points
@@ -27,7 +28,7 @@
 //	                          pad u16 (LE)
 //	nodesBlob(id)         -> Uint8Array, 16-byte records: id u32, kind u8,
 //	                          amount u16, x16 u16, y16 u16, tileX u16,
-//	                          tileY u16, pad u8
+//	                          tileY u16, tree u8
 //	buildingsBlob(id)     -> Uint8Array, 30-byte records: id u32, def u16,
 //	                          owner u8, pad u8, progress u16, trainCur u16,
 //	                          trainLeft u16, trainReq u16, tileX u16,
@@ -50,6 +51,9 @@
 //	techDefs(id)          -> array of tech defs {id,key,era,building,
 //	                          costFood,costWood,costGold,requires:[ids],
 //	                          ticks}
+//	biomeDefs(id)         -> array of biome defs {id,key,farmMul,tree}
+//	treeDefs(id)          -> array of tree species defs {id,key,gatherMul,
+//	                          wood,food,sawmill}
 //	playerTechs(id, p)    -> array of owned tech ids for player p
 //	victory(id)           -> {winner,kind}; winner 255 while the game is
 //	                          open, kind 0 none / 1 conquest / 2 wonder /
@@ -78,7 +82,7 @@ import (
 	"rts/sim/worldgen"
 )
 
-const bridgeVersion = "0.1.0"
+const bridgeVersion = "0.2.0"
 
 type instance struct {
 	world  *core.World
@@ -243,6 +247,13 @@ func mapTiles(this js.Value, args []js.Value) any {
 	return out
 }
 
+func mapBiomes(this js.Value, args []js.Value) any {
+	biomes := mustID(args).world.Map().Biomes()
+	out := js.Global().Get("Uint8Array").New(len(biomes))
+	js.CopyBytesToJS(out, biomes)
+	return out
+}
+
 func mapHeights(this js.Value, args []js.Value) any {
 	verts := mustID(args).world.Map().Grid().Vertices()
 	buf := make([]byte, len(verts)*2)
@@ -326,6 +337,7 @@ func nodesBlob(this js.Value, args []js.Value) any {
 			binary.LittleEndian.PutUint16(buf[off+9:], u16v(int32(n.Y)>>12))
 			binary.LittleEndian.PutUint16(buf[off+11:], u16v(n.TileX))
 			binary.LittleEndian.PutUint16(buf[off+13:], u16v(n.TileY))
+			buf[off+15] = n.Tree
 			off += 16
 		})
 	})
@@ -456,6 +468,36 @@ func techDefs(this js.Value, args []js.Value) any {
 	return arr
 }
 
+func biomeDefs(this js.Value, args []js.Value) any {
+	w := mustID(args)
+	arr := js.Global().Get("Array").New()
+	for _, d := range w.world.BiomeDefs().Defs() {
+		o := js.Global().Get("Object").New()
+		o.Set("id", int(d.ID))
+		o.Set("key", d.Key)
+		o.Set("farmMul", d.FarmMul)
+		o.Set("tree", int(d.Tree))
+		arr.Call("push", o)
+	}
+	return arr
+}
+
+func treeDefs(this js.Value, args []js.Value) any {
+	w := mustID(args)
+	arr := js.Global().Get("Array").New()
+	for _, d := range w.world.TreeDefs().Defs() {
+		o := js.Global().Get("Object").New()
+		o.Set("id", int(d.ID))
+		o.Set("key", d.Key)
+		o.Set("gatherMul", d.GatherMul)
+		o.Set("wood", d.Wood)
+		o.Set("food", d.Food)
+		o.Set("sawmill", d.Sawmill)
+		arr.Call("push", o)
+	}
+	return arr
+}
+
 func fogBlob(this js.Value, args []js.Value) any {
 	w := mustID(args)
 	if len(args) < 2 {
@@ -483,6 +525,7 @@ func defs(this js.Value, args []js.Value) any {
 		o.Set("trainFood", d.TrainFood)
 		o.Set("trainTicks", d.TrainTicks)
 		o.Set("minEra", d.MinEra)
+		o.Set("farmFoodMilli", d.FarmFoodMilli)
 		arr.Call("push", o)
 	}
 	return arr
@@ -539,6 +582,7 @@ func main() {
 	obj.Set("seed", js.FuncOf(seed))
 	obj.Set("mapSize", js.FuncOf(mapSize))
 	obj.Set("mapTiles", js.FuncOf(mapTiles))
+	obj.Set("mapBiomes", js.FuncOf(mapBiomes))
 	obj.Set("mapHeights", js.FuncOf(mapHeights))
 	obj.Set("mapHashHex", js.FuncOf(mapHashHex))
 	obj.Set("spawnCount", js.FuncOf(spawnCount))
@@ -551,6 +595,8 @@ func main() {
 	obj.Set("unitDefs", js.FuncOf(unitDefs))
 	obj.Set("eras", js.FuncOf(eras))
 	obj.Set("techDefs", js.FuncOf(techDefs))
+	obj.Set("biomeDefs", js.FuncOf(biomeDefs))
+	obj.Set("treeDefs", js.FuncOf(treeDefs))
 	obj.Set("playerTechs", js.FuncOf(playerTechs))
 	obj.Set("victory", js.FuncOf(victory))
 	obj.Set("relicsBlob", js.FuncOf(relicsBlob))

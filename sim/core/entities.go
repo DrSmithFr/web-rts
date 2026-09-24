@@ -51,6 +51,8 @@ const (
 	BldForge      uint16 = 6
 	BldBank       uint16 = 7
 	BldWonder     uint16 = 8
+	BldSawmill    uint16 = 9
+	BldFarm       uint16 = 10
 )
 
 // WinnerKind values for the game-over banner.
@@ -136,10 +138,13 @@ type Unit struct {
 	TX, TY fixed.F16
 	// PatrolX/Y is the other end of a patrol segment.
 	PatrolX, PatrolY fixed.F16
-	// Target is a gather node or build site; AttackTarget is the unit id
-	// chased while State == UnitAttack.
-	Target       entity.ID
+	// Target is a gather node or build site.
+	Target entity.ID
+	// AttackTarget is the unit or building id named by AttackKind
+	// (orders.TargetUnit/TargetBuilding, 0 = none), chased while
+	// State == UnitAttack.
 	AttackTarget entity.ID
+	AttackKind   uint8
 	// Field is the active flow field; FieldX/Y its goal tile.
 	Field  entity.ID
 	FieldX int32
@@ -148,12 +153,20 @@ type Unit struct {
 	Cooldown int32
 	CarriedK resource.Kind
 	Carried  int32
-	HP       int32
+	// GatherAcc is the fixed-point remainder of the per-tick chop amount
+	// when the target node is a tree species whose speed differs from
+	// the base gather rate (fractional part, 16.16).
+	GatherAcc int32
+	HP        int32
 }
 
-// Node is a harvestable resource node payload.
+// Node is a harvestable resource node payload. Tree is the species id
+// for wood and palm nodes (see sim/tree), 0 for other kinds. Corpse
+// marks a hunted-animal carcass, whose gatherer chains to live prey.
 type Node struct {
 	Kind   resource.Kind
+	Tree   uint8
+	Corpse bool
 	X, Y   fixed.F16
 	TileX  int32
 	TileY  int32
@@ -174,7 +187,10 @@ type Building struct {
 	TrainLeft  int32
 	TrainReq   int32
 	TrainQueue [MaxTrainQueue]uint16
-	HP         int32
+	// FarmAcc is the fixed-point food accumulated between whole units by
+	// a completed farm, at the biome multiplier of its tile (16.16).
+	FarmAcc int32
+	HP      int32
 }
 
 // Player is one player's economy and progress state. Mods is derived

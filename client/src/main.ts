@@ -19,7 +19,9 @@ import {
   gatherPayload,
   moveGroupPayload,
   patrolPayload,
+  repairPayload,
   researchPayload,
+  TargetKind,
   stopPayload,
   trainPayload,
 } from './sim/ordercodec';
@@ -33,26 +35,47 @@ import { GroundChunks } from './render/terrainChunks';
 import { Minimap } from './render/minimap';
 import type { RenderUnit } from './render/actors';
 import { Selection, normalizeRect, selectInRect, type ScreenPoint } from './engine/selection';
-import { createScene } from './render/scene';
+import { createScene, frameShadow } from './render/scene';
+import { Daylight } from './render/daylight';
+import { FireLights } from './render/lights';
 import { buildMapObjects } from './render/objects';
 import { buildNodeObjects } from './render/nodes';
 import { buildActors } from './render/actors';
+import { buildBuildings } from './render/buildings';
+import { buildFX } from './render/fx';
+import { buildingModel, unitModel } from './render/models';
 import { heightSampler } from './render/height';
 import { RtsCamera } from './render/camera';
 import { HEIGHT_SCALE, PALETTE, PLAYER_COLORS } from './render/palette';
 import { terrainName } from './render/terrainLabels';
 import { t, tn } from './i18n';
+import { createAudio } from './audio';
+import type { Mood } from './audio/composition';
+import { loadVolumes } from './audio/util';
 
 let LOCAL_PLAYER = 0;
 const NEUTRAL_OWNER = 255;
-// Moving states get the walk bob: move, attack (chase), patrol, wander, flee.
-const MOVING_STATES = new Set([1, 5, 6, 7, 8]);
+// unit and building entity ids collide (one counter per sim store), so
+// building ids are offset inside the client-side selection
+const BKEY = 1 << 30;
 const KIND_NAMES: Record<number, string> = {
   1: 'node.wood',
   2: 'node.stone',
   3: 'node.food',
   4: 'node.gold',
   5: 'node.oil',
+};
+
+// Building ids mirrored from data/buildings.json.
+const BLD_SAWMILL = 9;
+
+// Spark colors for harvest pops, indexed by node kind.
+const RESOURCE_NODE_COLORS: Record<number, number> = {
+  1: PALETTE.leaf,
+  2: PALETTE.stone,
+  3: PALETTE.berry,
+  4: PALETTE.gold,
+  5: 0x333344,
 };
 
 const statusEl = document.querySelector<HTMLDivElement>('#status')!;
@@ -77,8 +100,24 @@ const resEls = {
 };
 const victoryEl = document.querySelector<HTMLDivElement>('#victory')!;
 const canvas = document.querySelector<HTMLCanvasElement>('#gl')!;
+const eraPipEls = Array.from(document.querySelectorAll<HTMLSpanElement>('#erapips i'));
+
+// resource chip tooltips come from the locale table, never hard-coded
+const CHIP_KEYS: Record<string, string> = {
+  'chip-wood': 'res.wood',
+  'chip-stone': 'res.stone',
+  'chip-food': 'res.food',
+  'chip-gold': 'res.gold',
+  'chip-pop': 'res.pop',
+  'chip-relics': 'res.relics',
+};
 
 statusEl.textContent = t('hud.status.loading');
+
+for (const [id, key] of Object.entries(CHIP_KEYS)) {
+  const el = document.getElementById(id);
+  if (el) el.title = t(key as Parameters<typeof t>[0]);
+}
 
 const netEl = document.querySelector<HTMLDivElement>('#netstatus')!;
 let session: NetSession | null = null;
@@ -166,6 +205,7 @@ try {
       train: trainPayload,
       era: eraPayload,
       attack: attackPayload,
+      repair: repairPayload,
     },
   });
   (window as unknown as Record<string, unknown>).__rts = pre;
@@ -188,21 +228,49 @@ try {
   resbarEl.style.display = 'flex';
   console.info(t('hud.status.ready', { version: sim.version(), seed: world.seed() }));
 
+  // audio is synthesized live; browsers only let it start on a user gesture
+  const audio = createAudio(world.seed(), loadVolumes());
+  let audioStarted = false;
+  const unlockAudio = (): void => {
+    if (audioStarted) return;
+    audioStarted = true;
+    window.removeEventListener('pointerdown', unlockAudio);
+    window.removeEventListener('keydown', unlockAudio);
+    void audio.start();
+  };
+  window.addEventListener('pointerdown', unlockAudio);
+  window.addEventListener('keydown', unlockAudio);
+
   const size = world.mapSize();
   const tiles = world.mapTiles();
+  const biomes = world.mapBiomes();
   const heights = world.vertexHeights();
   console.info(`map ${size}x${size} hash=${world.mapHashHex()}`);
 
-  const { renderer, scene, camera } = createScene(canvas, size);
-  const ground = new GroundChunks(size, tiles, heights);
+  const bundle = createScene(canvas, size);
+  const { renderer, scene, camera } = bundle;
+  const daylight = new Daylight(
+    bundle.sun,
+    bundle.hemi,
+    scene.fog as THREE.Fog,
+    bundle.sky,
+    renderer,
+  );
+  const blockedTiles = new Set<number>(world.nodes().map((n) => n.tileY * size + n.tileX));
+  const ground = new GroundChunks(size, tiles, heights, blockedTiles, biomes);
   scene.add(ground.group);
   scene.add(buildMapObjects(size, heights, world.spawns()).group);
 
   let nodes = world.nodes();
   const nodesObj = buildNodeObjects(nodes, size, heights);
   scene.add(nodesObj.group);
-  const actors = buildActors(size, heights);
+  const actors = buildActors(size, heights, camera);
   scene.add(actors.group);
+  const buildingsObj = buildBuildings(size, heights);
+  scene.add(buildingsObj.group);
+  const sampleGround = heightSampler(size, heights);
+  const fx = buildFX(sampleGround);
+  scene.add(fx.group);
 
   const defs = world.defs();
   const defById = new Map<number, BuildingDef>(defs.map((d) => [d.id, d]));
@@ -210,11 +278,36 @@ try {
   const udefById = new Map<number, UnitDef>(udefs.map((d) => [d.id, d]));
   const eraDefs = world.eras();
   const techDefs = world.techDefs();
+  const biomeDefs = world.biomeDefs();
+  const treeDefs = world.treeDefs();
+  const treeById = new Map(treeDefs.map((d) => [d.id, d]));
   const techById = new Map(techDefs.map((d) => [d.id, d]));
+  const campfireDefId = defs.find((d) => d.key === 'campfire')?.id ?? -1;
+  const fireLights = new FireLights(scene);
+
+  // Model heights (world units) drive body-aware picking: clicking a
+  // roof or a head selects, not just the ground tile under the feet.
+  const unitHeights = new Map<number, number>();
+  for (const ud of udefs) {
+    const g = unitModel(ud.id).body;
+    g.computeBoundingBox();
+    unitHeights.set(ud.id, g.boundingBox ? Math.max(g.boundingBox.max.y, 0.8) : 1.2);
+  }
+  const buildingHeights = new Map<number, number>();
+  for (const d of defs) {
+    const g = buildingModel(d.key).structure;
+    g.computeBoundingBox();
+    buildingHeights.set(d.id, g.boundingBox ? Math.max(g.boundingBox.max.y, 1) : 1.4);
+  }
   const nodeByTile = new Map<number, NodeRec>();
+  const nodeById = new Map<number, NodeRec>();
   const refreshNodeIndex = (): void => {
     nodeByTile.clear();
-    for (const n of nodes) nodeByTile.set(n.tileY * size + n.tileX, n);
+    nodeById.clear();
+    for (const n of nodes) {
+      nodeByTile.set(n.tileY * size + n.tileX, n);
+      nodeById.set(n.id, n);
+    }
   };
   refreshNodeIndex();
 
@@ -225,14 +318,14 @@ try {
   const minimapCanvas = document.querySelector<HTMLCanvasElement>('#minimap')!;
   minimapCanvas.width = 168;
   minimapCanvas.height = 168;
-  const minimap = new Minimap(minimapCanvas, size, tiles);
+  const minimap = new Minimap(minimapCanvas, size, tiles, biomes);
   minimap.onPick = (x, y) => rtsCam.focus(x + 0.5, y + 0.5);
   const minimapEl = document.querySelector<HTMLDivElement>('#minimapbox')!;
   minimapEl.style.display = 'block';
 
   const interp = new Interpolated();
 
-  const rtsCam = new RtsCamera(camera, size, heightSampler(size, heights));
+  const rtsCam = new RtsCamera(camera, size, sampleGround);
   const home = world.spawns()[LOCAL_PLAYER] ?? { x: size / 2, y: size / 2 };
   rtsCam.focus(home.x + 0.5, home.y + 0.5);
   rtsCam.zoom(0.5);
@@ -244,22 +337,53 @@ try {
   let ownedTechs = new Set<number>(world.playerTechs(LOCAL_PLAYER));
   const selection = new Selection();
   let placing: BuildingDef | null = null;
-  let affordable = false;
 
   const groundY = (tx: number, ty: number): number =>
     heights[ty * (size + 1) + tx] * HEIGHT_SCALE;
 
   // placement ghost -------------------------------------------------------
-  const ghostGeo = new THREE.BoxGeometry(1, 1, 1);
-  ghostGeo.translate(0.5, 0, 0.5);
-  const ghostMat = new THREE.MeshBasicMaterial({
+  // a translucent silhouette of the actual building over a footprint tile
+  // overlay that turns red where placement is impossible
+  const ghostGroup = new THREE.Group();
+  ghostGroup.visible = false;
+  ghostGroup.matrixAutoUpdate = true;
+  const footGeo = new THREE.PlaneGeometry(1, 1);
+  footGeo.rotateX(-Math.PI / 2);
+  const footMat = new THREE.MeshBasicMaterial({
     color: PALETTE.leaf,
     transparent: true,
-    opacity: 0.45,
+    opacity: 0.32,
+    depthWrite: false,
   });
-  const ghost = new THREE.Mesh(ghostGeo, ghostMat);
-  ghost.visible = false;
-  scene.add(ghost);
+  const foot = new THREE.Mesh(footGeo, footMat);
+  foot.renderOrder = 2;
+  ghostGroup.add(foot);
+  const ghostMat = new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.65,
+    vertexColors: true,
+    depthWrite: false,
+  });
+  let ghostSilhouette: THREE.Mesh | null = null;
+  scene.add(ghostGroup);
+
+  // placementBlocked reports whether a def.size square at tx,ty overlaps a
+  // node, an existing building or the map border.
+  function placementBlocked(tx: number, ty: number, s: number): boolean {
+    if (tx < 0 || ty < 0 || tx + s > size || ty + s > size) return true;
+    for (let dy = 0; dy < s; dy++) {
+      for (let dx = 0; dx < s; dx++) {
+        if (blockedTiles.has((ty + dy) * size + (tx + dx))) return true;
+      }
+    }
+    for (const b of buildings) {
+      const d = defById.get(b.def);
+      const bs = d ? d.size : 1;
+      if (tx < b.tileX + bs && b.tileX < tx + s && ty < b.tileY + bs && b.tileY < ty + s) return true;
+    }
+    return false;
+  }
 
   // --- picking ----------------------------------------------------------
   const raycaster = new THREE.Raycaster();
@@ -292,45 +416,63 @@ try {
     return units
       .filter((u) => u.owner === LOCAL_PLAYER)
       .map((u) => {
-        const p = screenPos(
-          new THREE.Vector3(u.x, groundY(Math.floor(u.x), Math.floor(u.y)), u.y),
-        );
-        return { id: u.id, ...p };
+        const fy = groundY(Math.floor(u.x), Math.floor(u.y));
+        const p = screenPos(new THREE.Vector3(u.x, fy, u.y));
+        const top = screenPos(new THREE.Vector3(u.x, fy + (unitHeights.get(u.def) ?? 1.2), u.y));
+        return { id: u.id, ...p, syTop: top.sy, onScreen: p.onScreen };
       });
+  }
+
+  // distSqToSeg is the squared distance from a point to a screen segment.
+  function distSqToSeg(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2));
+    const qx = ax + t * dx - px;
+    const qy = ay + t * dy - py;
+    return qx * qx + qy * qy;
   }
 
   function nearestUnit(clientX: number, clientY: number, radius: number): number | null {
     let best: number | null = null;
-    let bestD2 = radius * radius;
-    for (const u of unitScreenPoints()) {
-      if (!u.onScreen) continue;
-      const d2 = (u.sx - clientX) ** 2 + (u.sy - clientY) ** 2;
-      if (d2 < bestD2) {
-        bestD2 = d2;
+    let bestD = Infinity;
+    for (const u of units) {
+      if (u.owner !== LOCAL_PLAYER) continue;
+      const fy = groundY(Math.floor(u.x), Math.floor(u.y));
+      const p = screenPos(new THREE.Vector3(u.x, fy, u.y));
+      if (!p.onScreen) continue;
+      const top = screenPos(new THREE.Vector3(u.x, fy + (unitHeights.get(u.def) ?? 1.2), u.y));
+      const w = Math.abs(screenPos(new THREE.Vector3(u.x + 0.5, fy, u.y)).sx - p.sx);
+      const r = Math.max(radius, w * 3);
+      const d = distSqToSeg(clientX, clientY, p.sx, p.sy, top.sx, top.sy);
+      if (d <= r * r && d < bestD) {
+        bestD = d;
         best = u.id;
       }
     }
     return best;
   }
 
+  // nearestBuilding returns a selection key (raw building id + BKEY).
   function nearestBuilding(clientX: number, clientY: number, radius: number): number | null {
     let best: number | null = null;
-    let bestD2 = radius * radius;
+    let bestD = Infinity;
     for (const b of buildings) {
       const def = defById.get(b.def);
       const half = ((def ? def.size : 1) - 1) / 2;
-      const p = screenPos(
-        new THREE.Vector3(
-          b.tileX + 0.5 + half,
-          groundY(b.tileX, b.tileY) + 0.5,
-          b.tileY + 0.5 + half,
-        ),
-      );
+      const cx = b.tileX + 0.5 + half;
+      const cz = b.tileY + 0.5 + half;
+      const fy = groundY(b.tileX, b.tileY);
+      const p = screenPos(new THREE.Vector3(cx, fy, cz));
       if (!p.onScreen) continue;
-      const d2 = (p.sx - clientX) ** 2 + (p.sy - clientY) ** 2;
-      if (d2 < bestD2) {
-        bestD2 = d2;
-        best = b.id;
+      const top = screenPos(new THREE.Vector3(cx, fy + (buildingHeights.get(b.def) ?? 1.4), cz));
+      const w = Math.abs(screenPos(new THREE.Vector3(cx + 0.5, fy, cz)).sx - p.sx);
+      const r = Math.max(radius, w * 2.6);
+      const d = distSqToSeg(clientX, clientY, p.sx, p.sy, top.sx, top.sy);
+      if (d <= r * r && d < bestD) {
+        bestD = d;
+        best = b.id + BKEY;
       }
     }
     return best;
@@ -342,16 +484,31 @@ try {
     return ids.filter((id) => owned.has(id));
   }
 
-  function gatherTargetAt(tile: number): NodeRec | null {
+  // gatherTargetAt resolves a right-click on ground to a harvestable
+  // node: candidates in the 3x3 tile window are ranked by how close they
+  // appear on screen to the cursor, so clicking a bush in front picks
+  // that bush, not the forest tile behind it.
+  function gatherTargetAt(tile: number, clientX: number, clientY: number): NodeRec | null {
     const tx = tile % size;
     const ty = Math.floor(tile / size);
+    let best: NodeRec | null = null;
+    let bestD = Infinity;
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
         const n = nodeByTile.get((ty + dy) * size + (tx + dx));
-        if (n && n.kind !== 5 && n.amount > 0) return n;
+        if (!n || n.kind === 5 || n.amount <= 0) continue;
+        const p = screenPos(new THREE.Vector3(n.x, groundY(n.tileX, n.tileY) + 0.3, n.y));
+        if (!p.onScreen) continue;
+        const sx = p.sx - clientX;
+        const sy = p.sy - clientY;
+        const d = sx * sx + sy * sy;
+        if (d < bestD) {
+          bestD = d;
+          best = n;
+        }
       }
     }
-    return null;
+    return best;
   }
 
   // --- orders -------------------------------------------------------------
@@ -381,6 +538,7 @@ try {
     const tx = tile % size;
     const ty = Math.floor(tile / size);
     issue(OrderKind.Build, buildPayload(ids[0], placing.id, tx, ty));
+    audio.place();
     setPlacing(null);
   }
 
@@ -397,7 +555,7 @@ try {
   }
 
   function issueStop(): void {
-    const ids = selection.toArray();
+    const ids = selection.toArray().filter((id) => id < BKEY);
     if (ids.length === 0) return;
     issue(OrderKind.Stop, stopPayload(ids));
   }
@@ -411,7 +569,19 @@ try {
   function issueAttack(target: UnitRec): void {
     const ids = selectedUnits().map((u) => u.id);
     if (ids.length === 0) return;
-    issue(OrderKind.Attack, attackPayload(ids, target.id));
+    issue(OrderKind.Attack, attackPayload(ids, target.id, TargetKind.Unit));
+  }
+
+  function issueAttackBuilding(targetId: number): void {
+    const ids = selectedUnits().map((u) => u.id);
+    if (ids.length === 0) return;
+    issue(OrderKind.Attack, attackPayload(ids, targetId, TargetKind.Building));
+  }
+
+  function issueRepair(targetId: number): void {
+    const ids = selectedUnits().map((u) => u.id);
+    if (ids.length === 0) return;
+    issue(OrderKind.Repair, repairPayload(ids, targetId));
   }
 
   function issuePatrol(tile: number): void {
@@ -425,17 +595,19 @@ try {
   // enemyUnitAt finds a visible hostile (players or wildlife) near a point.
   function enemyUnitAt(clientX: number, clientY: number, radius: number): UnitRec | null {
     let best: UnitRec | null = null;
-    let bestD2 = radius * radius;
+    let bestD = Infinity;
     for (const u of units) {
       if (u.owner === LOCAL_PLAYER) continue;
       if (!fogView.visible(Math.floor(u.x), Math.floor(u.y))) continue;
-      const p = screenPos(
-        new THREE.Vector3(u.x, groundY(Math.floor(u.x), Math.floor(u.y)), u.y),
-      );
+      const fy = groundY(Math.floor(u.x), Math.floor(u.y));
+      const p = screenPos(new THREE.Vector3(u.x, fy, u.y));
       if (!p.onScreen) continue;
-      const d2 = (p.sx - clientX) ** 2 + (p.sy - clientY) ** 2;
-      if (d2 < bestD2) {
-        bestD2 = d2;
+      const top = screenPos(new THREE.Vector3(u.x, fy + (unitHeights.get(u.def) ?? 1.2), u.y));
+      const w = Math.abs(screenPos(new THREE.Vector3(u.x + 0.5, fy, u.y)).sx - p.sx);
+      const r = Math.max(radius, w * 3);
+      const d = distSqToSeg(clientX, clientY, p.sx, p.sy, top.sx, top.sy);
+      if (d <= r * r && d < bestD) {
+        bestD = d;
         best = u;
       }
     }
@@ -443,24 +615,11 @@ try {
   }
 
   // --- panel --------------------------------------------------------------
-  function costLabel(def: BuildingDef): string {
-    const parts: string[] = [];
-    if (def.costWood > 0) parts.push(`${def.costWood}w`);
-    if (def.costStone > 0) parts.push(`${def.costStone}s`);
-    return parts.join(' ');
-  }
+  type CostKind = 'wood' | 'stone' | 'food' | 'gold';
 
   function canAfford(def: BuildingDef): boolean {
     const p = economy[LOCAL_PLAYER];
     return p !== undefined && p.res[1] >= def.costWood && p.res[2] >= def.costStone;
-  }
-
-  function unitCostLabel(def: UnitDef): string {
-    const parts: string[] = [];
-    if (def.costFood > 0) parts.push(`${def.costFood}f`);
-    if (def.costWood > 0) parts.push(`${def.costWood}w`);
-    if (def.costGold > 0) parts.push(`${def.costGold}g`);
-    return parts.join(' ');
   }
 
   function canAffordUnit(def: UnitDef): boolean {
@@ -474,14 +633,6 @@ try {
     );
   }
 
-  function techCostLabel(td: { costFood: number; costWood: number; costGold: number }): string {
-    const parts: string[] = [];
-    if (td.costFood > 0) parts.push(`${td.costFood}f`);
-    if (td.costWood > 0) parts.push(`${td.costWood}w`);
-    if (td.costGold > 0) parts.push(`${td.costGold}g`);
-    return parts.join(' ');
-  }
-
   function researchAffordable(td: { costFood: number; costWood: number; costGold: number }): boolean {
     const p = economy[LOCAL_PLAYER];
     return (
@@ -492,78 +643,113 @@ try {
     );
   }
 
+  // The panel must not churn its DOM every 10 ticks: a mousedown on a
+  // button destroyed by a mid-click rebuild never fires a click. HTML is
+  // only re-assigned when its structural signature changes; progress
+  // bars and percentage labels update in place via data hooks.
+  interface PanelAction {
+    act: 'place' | 'stop' | 'train' | 'research' | 'ageup';
+    def?: number;
+    bid?: number;
+    era?: number;
+    title?: string;
+  }
+  interface PanelDynamic {
+    id: string;
+    pct?: number;
+    label?: string;
+  }
+  let panelActs: PanelAction[] = [];
+  let panelDyn: PanelDynamic[] = [];
+  let panelSig = '';
+  let panelWired = false;
+
+  function esc(s: string): string {
+    return s.replace(
+      /[&<>"']/g,
+      (c) => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string),
+    );
+  }
+
+  function iconHtml(kind: CostKind): string {
+    return `<svg class="cost-ico" width="12" height="12"><use href="#i-${kind}"/></svg>`;
+  }
+
   function renderPanel(): void {
+    panelActs = [];
+    panelDyn = [];
     const villagers = selectedVillagers().length;
     const soldiers = selectedUnits().filter(
       (u) => (udefById.get(u.def)?.class ?? 0) >= 2 && u.def !== 1,
     ).length;
     const selBuildings = selection
       .toArray()
-      .map((id) => buildings.find((b) => b.id === id))
+      .map((id) => buildings.find((b) => id >= BKEY && b.id === id - BKEY))
       .filter((b): b is BuildingRec => b !== undefined && b.owner === LOCAL_PLAYER);
 
     if (villagers === 0 && soldiers === 0 && selBuildings.length === 0) {
       panelEl.style.display = 'none';
+      panelSig = '';
       return;
     }
-    panelEl.style.display = 'block';
-    panelEl.textContent = '';
 
     const pl = economy[LOCAL_PLAYER];
     const era = pl ? pl.era : 0;
+    const hintTxt = placing ? t('panel.place') : '';
+    const btn = (
+      action: PanelAction,
+      disabled: boolean,
+      label: string,
+      costs: [CostKind, number][] = [],
+      cls = '',
+      title = '',
+    ): string => {
+      const i = panelActs.push(action) - 1;
+      let inner = esc(label);
+      for (const [kind, n] of costs) if (n > 0) inner += iconHtml(kind) + String(n);
+      const tAttr = title ? ` title="${esc(title)}"` : '';
+      return `<button data-i="${i}"${cls ? ` class="${cls}"` : ''}${tAttr}${disabled ? ' disabled' : ''}>${inner}</button>`;
+    };
+    const dynBar = (id: string, pct: number, blue: boolean): string => {
+      panelDyn.push({ id, pct });
+      return `<div class="bar${blue ? ' blue' : ''}"><i data-w="${esc(id)}"></i></div>`;
+    };
+    const dynText = (id: string, label: string, cls = ''): string => {
+      panelDyn.push({ id, label });
+      return `<div${cls ? ` class="${cls}"` : ''} data-pct="${esc(id)}"></div>`;
+    };
 
+    let html = '';
     if (villagers > 0) {
-      const title = document.createElement('div');
-      title.textContent = t('panel.villagers', { count: villagers });
-      panelEl.appendChild(title);
-
-      const row = document.createElement('div');
-      row.className = 'row';
+      html += `<div class="title">${esc(t('panel.villagers', { count: villagers }))}</div><div class="row">`;
       for (const def of defs) {
         if (def.minEra > era) continue;
-        const btn = document.createElement('button');
-        btn.textContent = `${tn(`building.${def.key}`)} · ${costLabel(def)}`;
-        btn.disabled = !canAfford(def);
-        btn.onclick = () => setPlacing(def);
-        row.appendChild(btn);
+        html += btn(
+          { act: 'place', def: def.id },
+          !canAfford(def),
+          tn(`building.${def.key}`),
+          [['wood', def.costWood], ['stone', def.costStone]],
+        );
       }
-      const hint = document.createElement('div');
-      hint.className = 'dim';
-      hint.dataset.hint = '1';
-      panelEl.appendChild(row);
-      panelEl.appendChild(hint);
+      html += `</div><div class="dim" data-hint="1">${esc(hintTxt)}</div>`;
     }
 
     if (soldiers > 0) {
-      const title = document.createElement('div');
-      title.textContent = t('panel.military', { count: soldiers });
-      panelEl.appendChild(title);
-      const row = document.createElement('div');
-      row.className = 'row';
-      const stop = document.createElement('button');
-      stop.textContent = t('panel.stop');
-      stop.onclick = () => issueStop();
-      row.appendChild(stop);
-      const hint = document.createElement('div');
-      hint.className = 'dim';
-      hint.dataset.hint = '1';
-      panelEl.appendChild(row);
-      panelEl.appendChild(hint);
+      html += `<div class="title">${esc(t('panel.military', { count: soldiers }))}</div><div class="row one">`;
+      html += btn({ act: 'stop' }, false, t('panel.stop'));
+      html += `</div><div class="dim" data-hint="1">${esc(hintTxt)}</div>`;
     }
 
     for (const b of selBuildings) {
       const def = defById.get(b.def);
       if (!def) continue;
-      const line = document.createElement('div');
       if (b.progress > 0) {
         const pct = Math.round(100 * (1 - b.progress / def.buildTicks));
-        line.textContent = `${tn(`building.${def.key}`)} · ${t('panel.progress', { pct })}`;
-        panelEl.appendChild(line);
+        html += dynText(`c${b.id}`, `${tn(`building.${def.key}`)} · ${t('panel.progress', { pct })}`, 'title');
+        html += dynBar(`c${b.id}`, pct, false);
         continue;
       }
-      line.textContent = tn(`building.${def.key}`);
-      panelEl.appendChild(line);
-
+      html += `<div class="title">${esc(tn(`building.${def.key}`))}</div>`;
       const trainable = udefs.filter((d) => d.trainBy === b.def);
       if (trainable.length === 0) continue;
 
@@ -572,33 +758,24 @@ try {
         const total = cur && cur.trainTicks > 0 ? cur.trainTicks : 1;
         const pct = Math.round(100 * (1 - b.trainLeft / total));
         const curName = cur ? tn(`unit.${cur.key}`) : '?';
-        const qline = document.createElement('div');
-        qline.textContent = `${t('panel.training')} ${curName} · ${t('panel.trainProgress', { pct })}`;
-        panelEl.appendChild(qline);
+        html += dynText(`t${b.id}`, `${t('panel.training')} ${curName} · ${t('panel.trainProgress', { pct })}`);
+        html += dynBar(`t${b.id}`, pct, true);
         const pending = Math.max(0, b.trainReq - (b.trainLeft > 0 ? 0 : 1));
-        if (pending > 0) {
-          const q = document.createElement('div');
-          q.className = 'dim';
-          q.textContent = `${t('panel.queue')} ${pending}`;
-          panelEl.appendChild(q);
-        }
+        if (pending > 0) html += dynText(`q${b.id}`, `${t('panel.queue')} ${pending}`, 'dim');
       } else if (b.trainReq > 0) {
-        const q = document.createElement('div');
-        q.className = 'dim';
-        q.textContent = `${t('panel.queue')} ${b.trainReq}`;
-        panelEl.appendChild(q);
+        html += dynText(`q${b.id}`, `${t('panel.queue')} ${b.trainReq}`, 'dim');
       }
 
-      const row = document.createElement('div');
-      row.className = 'row';
+      html += '<div class="row">';
       for (const u of trainable) {
-        const btn = document.createElement('button');
-        btn.textContent = `${tn(`unit.${u.key}`)} · ${unitCostLabel(u)}`;
-        btn.disabled = !canAffordUnit(u);
-        btn.onclick = () => issueTrain(b.id, u.id);
-        row.appendChild(btn);
+        html += btn(
+          { act: 'train', bid: b.id, def: u.id },
+          !canAffordUnit(u),
+          tn(`unit.${u.key}`),
+          [['food', u.costFood], ['wood', u.costWood], ['gold', u.costGold]],
+        );
       }
-      panelEl.appendChild(row);
+      html += '</div>';
     }
 
     // research buttons for every selected tech building
@@ -606,22 +783,21 @@ try {
       if (b.progress > 0) continue;
       const techs = techDefs.filter((td) => td.building === b.def && !ownedTechs.has(td.id));
       if (techs.length === 0) continue;
-      const row = document.createElement('div');
-      row.className = 'row';
+      html += '<div class="row">';
       for (const td of techs) {
         const reqsOk = td.requires.every((r) => ownedTechs.has(r));
-        const btn = document.createElement('button');
-        btn.textContent = `${tn(`tech.${td.key}`)} · ${techCostLabel(td)}`;
-        btn.disabled =
+        html += btn(
+          { act: 'research', def: td.id },
           !reqsOk ||
-          td.era > era ||
-          pl === undefined ||
-          !researchAffordable(td) ||
-          (pl.techCur !== 0 && pl.techCur !== td.id);
-        btn.onclick = () => issueResearch(td.id);
-        row.appendChild(btn);
+            td.era > era ||
+            pl === undefined ||
+            !researchAffordable(td) ||
+            (pl.techCur !== 0 && pl.techCur !== td.id),
+          tn(`tech.${td.key}`),
+          [['food', td.costFood], ['wood', td.costWood], ['gold', td.costGold]],
+        );
       }
-      panelEl.appendChild(row);
+      html += '</div>';
     }
 
     // current research progress
@@ -629,10 +805,8 @@ try {
       const td = techById.get(pl.techCur);
       if (td) {
         const pct = Math.round(100 * (1 - pl.techLeft / td.ticks));
-        const line = document.createElement('div');
-        line.className = 'dim';
-        line.textContent = `${tn(`tech.${td.key}`)} · ${t('panel.researching', { pct })}`;
-        panelEl.appendChild(line);
+        html += dynText('rs', `${tn(`tech.${td.key}`)} · ${t('panel.researching', { pct })}`, 'dim');
+        html += dynBar('rs', pct, true);
       }
     }
 
@@ -641,39 +815,90 @@ try {
       const next = eraDefs[era + 1];
       if (pl.ageLeft > 0) {
         const pct = Math.round(100 * (1 - pl.ageLeft / next.ageTicks));
-        const line = document.createElement('div');
-        line.textContent = `${t('panel.aging', { era: tn(`era.${next.key}`) })} · ${pct}%`;
-        panelEl.appendChild(line);
+        html += dynText('age', `${t('panel.aging', { era: tn(`era.${next.key}`) })} · ${pct}%`);
+        html += dynBar('age', pct, false);
       } else {
         const req = defById.get(next.reqBuilding);
         const hasReq = buildings.some(
           (b) => b.owner === LOCAL_PLAYER && b.def === next.reqBuilding && b.progress === 0,
         );
-        const affordable = pl.res[3] >= next.costFood && pl.res[4] >= next.costGold;
-        const btn = document.createElement('button');
-        btn.textContent = `${t('panel.ageup', { era: tn(`era.${next.key}`) })} · ${next.costFood}f ${next.costGold}g`;
-        btn.disabled = !hasReq || !affordable;
-        btn.title = req && !hasReq ? tn(`building.${req.key}`) : '';
-        btn.onclick = () => issueAgeUp(era + 1);
-        const row = document.createElement('div');
-        row.className = 'row';
-        row.appendChild(btn);
-        panelEl.appendChild(row);
+        const canAge = pl.res[3] >= next.costFood && pl.res[4] >= next.costGold;
+        html += '<div class="row one">';
+        html += btn(
+          { act: 'ageup', era: era + 1 },
+          !hasReq || !canAge,
+          t('panel.ageup', { era: tn(`era.${next.key}`) }),
+          [['food', next.costFood], ['gold', next.costGold]],
+          'gold',
+          req && !hasReq ? tn(`building.${req.key}`) : '',
+        );
+        html += '</div>';
       }
     }
+
+    const sig = `${html}\u0000${JSON.stringify(panelActs)}`;
+    if (sig !== panelSig) {
+      panelSig = sig;
+      panelEl.innerHTML = html;
+      if (!panelWired) {
+        panelWired = true;
+        panelEl.addEventListener('click', (e) => {
+          const el = (e.target as HTMLElement).closest('button');
+          if (!el) return;
+          const a = panelActs[Number(el.dataset.i)];
+          if (!a) return;
+          switch (a.act) {
+            case 'place': {
+              const d = defById.get(a.def as number);
+              if (d) setPlacing(d);
+              break;
+            }
+            case 'stop':
+              issueStop();
+              break;
+            case 'train':
+              issueTrain(a.bid as number, a.def as number);
+              break;
+            case 'research':
+              issueResearch(a.def as number);
+              break;
+            case 'ageup':
+              issueAgeUp(a.era as number);
+              break;
+          }
+        });
+      }
+    }
+    for (const d of panelDyn) {
+      if (d.pct !== undefined) {
+        const fill = panelEl.querySelector(`i[data-w="${d.id}"]`) as HTMLElement | null;
+        if (fill) fill.style.width = `${Math.max(2, Math.min(100, d.pct))}%`;
+      }
+      if (d.label !== undefined) {
+        const lab = panelEl.querySelector(`[data-pct="${d.id}"]`);
+        if (lab) lab.textContent = d.label;
+      }
+    }
+    panelEl.style.display = 'block';
   }
 
   function setPlacing(def: BuildingDef | null): void {
     placing = def;
-    ghost.visible = def !== null;
-    for (const el of panelEl.querySelectorAll('[data-hint]')) {
-      el.textContent = def ? t('panel.place') : '';
+    if (def) {
+      if (ghostSilhouette) ghostGroup.remove(ghostSilhouette);
+      ghostSilhouette = new THREE.Mesh(buildingModel(def.key).structure, ghostMat);
+      ghostSilhouette.renderOrder = 3;
+      ghostGroup.add(ghostSilhouette);
     }
+    ghostGroup.visible = def !== null;
+    renderPanel();
   }
 
   // --- pointer input --------------------------------------------------------
   let leftStart: { x: number; y: number } | null = null;
   let rightStart: { x: number; yaw: number } | null = null;
+  let rightDownOnCanvas = false;
+  let rightRotated = false;
   let lastTile: number | null = null;
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -684,18 +909,22 @@ try {
       leftStart = { x: e.clientX, y: e.clientY };
     } else if (e.button === 2) {
       rightStart = { x: e.clientX, yaw: rtsCam.yaw };
+      rightDownOnCanvas = true;
+      rightRotated = false;
     }
   });
 
   window.addEventListener('pointermove', (e) => {
     if (rightStart) {
-      rtsCam.rotate((e.clientX - rightStart.x) * 0.005);
+      const dx = e.clientX - rightStart.x;
+      if (Math.abs(dx) > 3) rightRotated = true;
+      rtsCam.rotate(dx * 0.005);
       rightStart.x = e.clientX;
     }
     if (leftStart) {
       const dx = e.clientX - leftStart.x;
       const dy = e.clientY - leftStart.y;
-      if (dx * dx + dy * dy > 16) {
+      if (dx * dx + dy * dy > 144) {
         const r = normalizeRect(leftStart.x, leftStart.y, e.clientX, e.clientY);
         selRectEl.style.display = 'block';
         selRectEl.style.left = `${r.x0}px`;
@@ -712,12 +941,18 @@ try {
     if (e.button === 2) {
       if (rightStart) {
         rightStart = null;
+      } else {
+        rightDownOnCanvas = false;
       }
       return;
     }
     if (e.button !== 0 || !leftStart) return;
-    const dragged =
-      Math.abs(e.clientX - leftStart.x) > 4 || Math.abs(e.clientY - leftStart.y) > 4;
+    // A click with a few pixels of jitter is still a click: rect-select
+    // projects the unit's foot position, which a 4px micro-drag misses,
+    // so the unit under the cursor silently failed to select.
+    const dx = e.clientX - leftStart.x;
+    const dy = e.clientY - leftStart.y;
+    const dragged = dx * dx + dy * dy > 144;
     selRectEl.style.display = 'none';
     const tile = tileAt(e.clientX, e.clientY);
 
@@ -744,31 +979,65 @@ try {
       }
     }
     applySelection();
+    audio.click();
     leftStart = null;
   });
 
   window.addEventListener('pointerup', (e) => {
     if (e.button !== 2) return;
+    const downOnCanvas = rightDownOnCanvas;
+    const rotated = rightRotated;
+    rightDownOnCanvas = false;
+    rightRotated = false;
+    if (!downOnCanvas) return; // right-click began on the HUD: no world order
+    if (rotated && !placing) return; // right-drag rotates the camera, it is not an order
     if (placing) {
       setPlacing(null);
       return;
     }
     const tile = tileAt(e.clientX, e.clientY);
     if (tile === null) return;
+    const playerCol = PLAYER_COLORS[LOCAL_PLAYER % PLAYER_COLORS.length];
+    const tx = tile % size;
+    const ty = Math.floor(tile / size);
     const enemy = enemyUnitAt(e.clientX, e.clientY, 22);
     if (enemy) {
       issueAttack(enemy);
+      audio.attackOrder();
+      fx.ring(enemy.x, enemy.y, 0xe05050);
       return;
     }
     if (e.shiftKey && selectedUnits().length > 0) {
       issuePatrol(tile);
+      audio.order();
+      fx.ring(tx + 0.5, ty + 0.5, playerCol);
       return;
     }
-    const node = gatherTargetAt(tile);
+    const bid = nearestBuilding(e.clientX, e.clientY, 26);
+    if (bid !== null) {
+      const b = buildings.find((x) => x.id === bid - BKEY);
+      if (b && b.owner === LOCAL_PLAYER && b.progress > 0) {
+        issueRepair(b.id);
+        audio.order();
+        fx.ring(b.tileX + 0.5, b.tileY + 0.5, playerCol);
+        return;
+      }
+      if (b) {
+        issueAttackBuilding(b.id);
+        audio.attackOrder();
+        fx.ring(b.tileX + 0.5, b.tileY + 0.5, 0xe05050);
+        return;
+      }
+    }
+    const node = gatherTargetAt(tile, e.clientX, e.clientY);
     if (node) {
       issueGather(node);
+      audio.order();
+      fx.ring(node.x, node.y, playerCol);
     } else {
       issueMove(tile);
+      audio.order();
+      fx.ring(tx + 0.5, ty + 0.5, playerCol);
     }
   });
 
@@ -811,16 +1080,31 @@ try {
       hoverEl.style.visibility = 'hidden';
       return;
     }
+    // units answer first so hovering your own or a visible hostile names it
+    const own = nearestUnit(clientX, clientY, 15);
+    const hovered = own !== null ? units.find((u) => u.id === own) : enemyUnitAt(clientX, clientY, 15);
+    if (hovered) {
+      const ud = udefById.get(hovered.def);
+      hoverEl.textContent = ud ? `${tn(`unit.${ud.key}`)} · ${hovered.hp}/${ud.hp}` : `unit ${hovered.def}`;
+      hoverEl.style.visibility = 'visible';
+      return;
+    }
     const node = nodeByTile.get(tile);
     if (node && node.kind !== 5) {
-      hoverEl.textContent =
-        node.amount > 0
-          ? `${tn(KIND_NAMES[node.kind])} · ${node.amount}`
-          : t('node.depleted');
+      const sp = node.tree ? treeById.get(node.tree) : undefined;
+      const label = sp ? tn(`tree.${sp.key}`) : tn(KIND_NAMES[node.kind]);
+      const gated =
+        sp?.sawmill === true &&
+        !buildings.some((b) => b.owner === LOCAL_PLAYER && b.def === BLD_SAWMILL && b.progress === 0);
+      hoverEl.textContent = node.amount
+        ? `${label} · ${node.amount}${gated ? ` · ${tn('tree.needSawmill')}` : ''}`
+        : t('node.depleted');
     } else {
       const tx = tile % size;
       const ty = Math.floor(tile / size);
-      hoverEl.textContent = `${terrainName(tiles[tile])} · ${t('hud.height')} ${heights[ty * (size + 1) + tx]}`;
+      const b = biomeDefs[biomes[tile]];
+      const farm = b ? ` · ${tn(`biome.${b.key}`)} ×${b.farmMul / 1000}` : '';
+      hoverEl.textContent = `${terrainName(tiles[tile])}${farm} · ${t('hud.height')} ${heights[ty * (size + 1) + tx]}`;
     }
     hoverEl.style.visibility = 'visible';
   }
@@ -867,17 +1151,65 @@ try {
   // --- HUD ----------------------------------------------------------------
   let economy = world.economy();
 
+  // audio bookkeeping for cosmetic-only triggers
+  const knownBuilt = new Set<number>(
+    world
+      .buildings()
+      .filter((b) => b.owner === LOCAL_PLAYER && b.progress === 0)
+      .map((b) => b.id),
+  );
+  let lastEra = economy[LOCAL_PLAYER]?.era ?? 0;
+  let audioOver = false;
+
+  function setVal(el: HTMLSpanElement, v: number | string): void {
+    const s = String(v);
+    if (el.textContent === s) return;
+    el.textContent = s;
+    el.classList.remove('bump');
+    void el.offsetWidth;
+    el.classList.add('bump');
+    window.setTimeout(() => el.classList.remove('bump'), 700);
+  }
+
   function renderHud(): void {
     const p = economy[LOCAL_PLAYER];
     if (!p) return;
-    resEls.wood.textContent = String(p.res[1]);
-    resEls.stone.textContent = String(p.res[2]);
-    resEls.food.textContent = String(p.res[3]);
-    resEls.gold.textContent = String(p.res[4]);
+    setVal(resEls.wood, p.res[1]);
+    setVal(resEls.stone, p.res[2]);
+    setVal(resEls.food, p.res[3]);
+    setVal(resEls.gold, p.res[4]);
     resEls.pop.textContent = `${p.pop}/${p.popCap}`;
     const ed = eraDefs[p.era];
     resEls.era.textContent = ed ? tn(`era.${ed.key}`) : String(p.era);
+    eraPipEls.forEach((pip, i) => pip.classList.toggle('on', i <= p.era));
     resEls.relics.textContent = String(relics.filter((r) => r.owner === LOCAL_PLAYER).length);
+  }
+
+  // resource floaters: small +N texts rising from harvest points, pooled
+  const floaters: { el: HTMLDivElement; until: number }[] = [];
+  function floater(x: number, y: number, text: string, color: number): void {
+    let slot = floaters.find((f) => f.until <= performance.now());
+    if (!slot) {
+      if (floaters.length >= 24) return;
+      const el = document.createElement('div');
+      el.className = 'floater';
+      document.body.appendChild(el);
+      slot = { el, until: 0 };
+      floaters.push(slot);
+    }
+    const el = slot.el;
+    el.textContent = text;
+    el.style.color = `#${color.toString(16).padStart(6, '0')}`;
+    el.style.left = `${Math.round(x)}px`;
+    el.style.top = `${Math.round(y)}px`;
+    el.style.transition = 'none';
+    el.style.transform = 'translate(-50%, 0)';
+    el.style.opacity = '1';
+    void el.offsetWidth;
+    el.style.transition = 'transform 0.9s ease-out, opacity 0.9s ease-in';
+    el.style.transform = 'translate(-50%, -38px)';
+    el.style.opacity = '0';
+    slot.until = performance.now() + 950;
   }
 
   // --- main loop ----------------------------------------------------------
@@ -886,9 +1218,61 @@ try {
   let lastLoggedTick = -1;
   let lastFogTick = -1;
 
+  // last-seen snapshots for effect triggers (client-only bookkeeping)
+  const lastVis = new Map<number, { hp: number; x: number; y: number; owner: number }>();
+  const lastNodeAmt = new Map<number, number>();
+
   function commitSnapshot(): void {
     units = world.units();
     interp.commit(units.map((u) => [u.id, { x: u.x, y: u.y }] as [number, { x: number; y: number }]));
+    // hit sparks and death puffs from hp deltas between snapshots
+    const seen = new Set<number>();
+    for (const u of units) {
+      seen.add(u.id);
+      const prev = lastVis.get(u.id);
+      if (!prev) {
+        lastVis.set(u.id, { hp: u.hp, x: u.x, y: u.y, owner: u.owner });
+        continue;
+      }
+      if (u.hp < prev.hp) {
+        const y = groundY(Math.floor(u.x), Math.floor(u.y));
+        fx.burst(u.x, y, u.y, 0xffd27a, 2, 0.7);
+        if (fogView.visible(Math.floor(u.x), Math.floor(u.y))) audio.hit();
+        prev.hp = u.hp;
+        prev.x = u.x;
+        prev.y = u.y;
+      } else {
+        prev.hp = u.hp;
+        prev.x = u.x;
+        prev.y = u.y;
+      }
+    }
+    for (const [id, u] of lastVis) {
+      if (seen.has(id)) continue;
+      const y = groundY(Math.floor(u.x), Math.floor(u.y));
+      const col = u.owner === NEUTRAL_OWNER ? 0xa08a6a : PLAYER_COLORS[u.owner % PLAYER_COLORS.length];
+      if (fogView.visible(Math.floor(u.x), Math.floor(u.y))) {
+        fx.burst(u.x, y, u.y, col, 8);
+        audio.death();
+      }
+      lastVis.delete(id);
+    }
+  }
+
+  function resolveTarget(id: number): { x: number; y: number } | null {
+    for (const u of units) {
+      if (u.id === id) return { x: u.x, y: u.y };
+    }
+    for (const b of buildings) {
+      if (b.id === id) {
+        const d = defById.get(b.def);
+        const s = d ? d.size : 1;
+        return { x: b.tileX + s / 2, y: b.tileY + s / 2 };
+      }
+    }
+    const n = nodeById.get(id);
+    if (n) return { x: n.x, y: n.y };
+    return null;
   }
 
   // ?turbo=N runs N sim ticks per loop iteration (solo only); used by
@@ -903,6 +1287,7 @@ try {
     },
     () => {
       const now = performance.now();
+      const fdt = Math.min(0.1, (now - frameStart) / 1000);
       smoothedMs = smoothedMs * 0.9 + (now - frameStart) * 0.1;
       frameStart = now;
 
@@ -912,9 +1297,6 @@ try {
         const mine = u.owner === LOCAL_PLAYER;
         if (!mine && !fogView.visible(Math.floor(u.x), Math.floor(u.y))) continue;
         const p = interp.get(u.id, alpha) ?? { x: u.x, y: u.y };
-        const yOff = MOVING_STATES.has(u.state)
-          ? Math.abs(Math.sin(now * 0.012 + u.id)) * 0.09
-          : 0;
         const def = udefById.get(u.def);
         const color =
           u.owner === NEUTRAL_OWNER
@@ -928,34 +1310,87 @@ try {
           owner: u.owner,
           x: p.x,
           y: p.y,
-          yOff,
           carried: u.carried,
+          carriedKind: u.carriedKind,
           def: u.def,
           cls: def?.class ?? 1,
+          state: u.state,
+          target: u.target,
           color,
           hpFrac,
         });
       }
-      actors.setUnits(renderUnits);
+      actors.setUnits(renderUnits, now, resolveTarget);
       buildings = world.buildings().filter(
         (b) => b.owner === LOCAL_PLAYER || fogView.visible(b.tileX, b.tileY),
       );
-      actors.setBuildings(buildings, defById);
+      buildingsObj.setBuildings(buildings, defById, now);
       // Refresh every frame so rings track interpolated movement.
-      actors.setSelection(selection.toArray());
+      const selKeys = selection.toArray();
+      actors.setSelection(selKeys.filter((id) => id < BKEY));
+      buildingsObj.setSelection(selKeys.filter((id) => id >= BKEY).map((id) => id - BKEY));
+      fx.update(fdt);
 
       const tick = world.tick();
       if (tick % 10 === 0) {
         nodes = world.nodes();
         nodesObj.update(nodes);
         refreshNodeIndex();
+        for (const n of nodes) {
+          const prev = lastNodeAmt.get(n.id);
+          if (prev !== undefined && n.amount < prev - 0) {
+            if (fogView.visible(n.tileX, n.tileY)) {
+              const kindCol = RESOURCE_NODE_COLORS[n.kind] ?? PALETTE.stone;
+              fx.burst(n.x, groundY(n.tileX, n.tileY) + 0.3, n.y, kindCol, 2, 0.5);
+              const fp = screenPos(new THREE.Vector3(n.x, groundY(n.tileX, n.tileY) + 0.7, n.y));
+              if (fp.onScreen) floater(fp.sx, fp.sy, `+${prev - n.amount}`, kindCol);
+            }
+          }
+          lastNodeAmt.set(n.id, n.amount);
+        }
         economy = world.economy();
         relics = world.relics();
         ownedTechs = new Set(world.playerTechs(LOCAL_PLAYER));
         renderHud();
         renderPanel();
+
+        // procedural music inputs: mood from visible battle state, timbre
+        // from the biome under the camera
+        const cx = Math.floor(rtsCam.target.x);
+        const cz = Math.floor(rtsCam.target.z);
+        const bt = biomeDefs[biomes[Math.max(0, Math.min(size * size - 1, cz * size + cx))]];
+        audio.setBiome(bt ? bt.key : 'temperate');
+        let mood: Mood = 'calm';
+        // state 5 == sim UnitAttack
+        if (units.some((u) => u.state === 5 && u.owner !== NEUTRAL_OWNER)) mood = 'combat';
+        else if (
+          units.some(
+            (u) =>
+              u.owner !== LOCAL_PLAYER &&
+              u.owner !== NEUTRAL_OWNER &&
+              Math.abs(u.x - rtsCam.target.x) < 40 &&
+              Math.abs(u.y - rtsCam.target.z) < 40 &&
+              fogView.visible(Math.floor(u.x), Math.floor(u.y)),
+          )
+        )
+          mood = 'tension';
+        audio.setMood(mood);
+        for (const b of world.buildings()) {
+          if (b.owner === LOCAL_PLAYER && b.progress === 0 && !knownBuilt.has(b.id)) {
+            knownBuilt.add(b.id);
+            audio.buildDone();
+          }
+        }
+        const eraNow = economy[LOCAL_PLAYER]?.era ?? 0;
+        if (eraNow > lastEra) audio.eraUp();
+        lastEra = eraNow;
+
         const vic = world.victory();
         if (vic.winner !== 255) {
+          if (!audioOver) {
+            audioOver = true;
+            audio.endMatch(vic.winner === LOCAL_PLAYER);
+          }
           const kinds = { 1: 'victory.1', 2: 'victory.2', 3: 'victory.3' } as const;
           victoryEl.style.display = 'block';
           victoryEl.textContent = t('victory.text', {
@@ -974,21 +1409,55 @@ try {
       if (placing && lastTile !== null) {
         const tx = lastTile % size;
         const ty = Math.floor(lastTile / size);
-        affordable = canAfford(placing);
-        ghost.visible = true;
-        ghost.position.set(tx, groundY(tx, ty) + 0.05, ty);
-        ghost.scale.set(placing.size, 1, placing.size);
-        ghostMat.color.setHex(affordable ? PALETTE.leaf : 0xd94f4f);
+        const s = placing.size;
+        const ok = canAfford(placing) && !placementBlocked(tx, ty, s);
+        ghostGroup.visible = true;
+        ghostGroup.position.set(tx + s / 2, groundY(tx, ty), ty + s / 2);
+        foot.scale.set(s, 1, s);
+        const col = ok ? PALETTE.leaf : 0xd94f4f;
+        footMat.color.setHex(col);
+        ghostMat.color.setHex(ok ? 0xffffff : 0xff8a7a);
       }
 
       driveCamera();
       rtsCam.update();
       ground.cull(camera);
+      ground.setTime(now / 1000);
+      daylight.update(tick);
+      frameShadow(
+        bundle,
+        rtsCam.target.x,
+        rtsCam.target.z,
+        THREE.MathUtils.clamp(rtsCam.dist * 0.9, 24, 90),
+        daylight.dir,
+      );
+      fireLights.update(
+        buildings
+          .filter((b) => b.def === campfireDefId && b.progress === 0)
+          .map((b) => {
+            const d = defById.get(b.def);
+            const half = (d ? d.size : 1) / 2;
+            return {
+              id: b.id,
+              x: b.tileX + half,
+              y: groundY(b.tileX, b.tileY) + 0.14,
+              z: b.tileY + half,
+            };
+          }),
+        rtsCam.target.x,
+        rtsCam.target.z,
+        daylight.night,
+        now / 1000,
+      );
       minimap.draw(fogView, renderUnits, {
         x: rtsCam.target.x,
         z: rtsCam.target.z,
         view: Math.min(size, rtsCam.dist * 1.2),
-      }, relics);
+      }, relics, nodes, buildings.map((b) => {
+        const d = defById.get(b.def);
+        const half = (d ? d.size : 1) / 2;
+        return { x: b.tileX + half, y: b.tileY + half, owner: b.owner };
+      }));
       renderer.render(scene, camera);
 
       tickEl.textContent = String(tick);

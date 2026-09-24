@@ -14,6 +14,7 @@ package core
 import (
 	"fmt"
 
+	"rts/sim/biome"
 	"rts/sim/building"
 	"rts/sim/entity"
 	"rts/sim/era"
@@ -22,15 +23,17 @@ import (
 	"rts/sim/orders"
 	"rts/sim/path"
 	"rts/sim/proto"
+	"rts/sim/resource"
 	"rts/sim/rng"
 	"rts/sim/tech"
+	"rts/sim/tree"
 	"rts/sim/units"
 	"rts/sim/worldgen"
 )
 
 const (
 	// WorldVersion bumps whenever the hash layout changes.
-	WorldVersion uint64 = 6
+	WorldVersion uint64 = 9
 
 	// HashPeriodTicks is how often peers exchange state hashes on the
 	// wire (and how often replays checkpoint).
@@ -39,7 +42,7 @@ const (
 	// MaxPlayers is the fixed player table size.
 	MaxPlayers = 8
 
-	hashLabel = "rts.world/v6"
+	hashLabel = "rts.world/v10"
 )
 
 // World is the full simulation state.
@@ -54,6 +57,9 @@ type World struct {
 	udefs      *units.Table
 	edefs      *era.Table
 	tdefs      *tech.Table
+	biomeDefs  *biome.Table
+	species    *tree.Table
+	treeStep   [tree.Count]int32
 	players    [MaxPlayers]Player
 	relics     [RelicCount]Relic
 	winner     uint8
@@ -98,12 +104,17 @@ func newWorld(seed uint64, m *worldgen.Map) *World {
 		udefs:     units.MustLoad(),
 		edefs:     era.MustLoad(),
 		tdefs:     tech.MustLoad(),
+		biomeDefs: biome.MustLoad(),
+		species:   tree.MustLoad(),
 		winner:    OwnerNeutral,
 		units:     entity.New[Unit](),
 		nodes:     entity.New[Node](),
 		buildings: entity.New[Building](),
 		fields:    entity.New[path.Field](),
 		occupied:  make([]bool, size*size),
+	}
+	for i := 1; i < tree.Count; i++ {
+		w.treeStep[i] = int32((int64(resource.GatherRate) << 16) * int64(w.species.Get(uint8(i)).GatherMul) / 1000)
 	}
 	mr := m.Relics()
 	for i := range w.relics {
@@ -143,6 +154,12 @@ func (w *World) EraDefs() *era.Table { return w.edefs }
 
 // TechDefs returns the loaded technology table.
 func (w *World) TechDefs() *tech.Table { return w.tdefs }
+
+// BiomeDefs returns the loaded biome table.
+func (w *World) BiomeDefs() *biome.Table { return w.biomeDefs }
+
+// TreeDefs returns the loaded tree species table.
+func (w *World) TreeDefs() *tree.Table { return w.species }
 
 // Winner returns the game-over owner and kind (WinnerNone while open).
 func (w *World) Winner() (uint8, uint8) { return w.winner, w.winnerKind }
@@ -198,6 +215,8 @@ func (w *World) Step(due []proto.Order) {
 			ok = w.applyAgeUp(o.Player, o.Payload)
 		case orders.Research:
 			ok = w.applyResearch(o.Player, o.Payload)
+		case orders.Repair:
+			ok = w.applyRepair(o.Player, o.Payload)
 		default:
 			w.rejected++
 			continue
@@ -275,15 +294,23 @@ func (w *World) Hash() uint64 {
 		h.WriteU32(uint32(u.Y))
 		h.WriteU32(uint32(u.Target))
 		h.WriteU32(uint32(u.AttackTarget))
+		h.WriteU32(uint32(u.AttackKind))
 		h.WriteU64(uint64(int64(u.Cooldown)))
 		h.WriteU32(uint32(u.CarriedK))
 		h.WriteU64(uint64(int64(u.Carried)))
+		h.WriteU64(uint64(int64(u.GatherAcc)))
 		h.WriteU64(uint64(int64(u.HP)))
 	})
 	h.WriteU32(uint32(w.nodes.Len()))
 	w.nodes.Each(func(id entity.ID, n *Node) {
 		h.WriteU32(uint32(id))
 		h.WriteU32(uint32(n.Kind))
+		h.WriteU32(uint32(n.Tree))
+		if n.Corpse {
+			h.WriteU32(1)
+		} else {
+			h.WriteU32(0)
+		}
 		h.WriteU64(uint64(int64(n.Amount)))
 		h.WriteU32(uint32(n.TileX))
 		h.WriteU32(uint32(n.TileY))
@@ -297,6 +324,7 @@ func (w *World) Hash() uint64 {
 		h.WriteU32(uint32(b.TileY))
 		h.WriteU32(uint32(b.Size))
 		h.WriteU64(uint64(int64(b.Progress)))
+		h.WriteU64(uint64(int64(b.FarmAcc)))
 		h.WriteU32(uint32(b.TrainCur))
 		h.WriteU64(uint64(int64(b.TrainLeft)))
 		h.WriteU64(uint64(int64(b.TrainReq)))

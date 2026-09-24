@@ -13,6 +13,13 @@ export const OrderKind = {
   Patrol: 8,
   AgeUp: 9,
   Research: 10,
+  Repair: 11,
+} as const;
+
+// TargetKind names the entity store an attack-like target id lives in.
+export const TargetKind = {
+  Unit: 1,
+  Building: 2,
 } as const;
 
 export interface MoveItem {
@@ -83,13 +90,20 @@ export function trainPayload(building: number, unitDef?: number): Uint8Array {
   return w.out();
 }
 
-// attackPayload: group attacks one target entity.
-export function attackPayload(ids: number[], target: number): Uint8Array {
+// attackPayload: group attacks one target entity; kind is a TargetKind.
+export function attackPayload(ids: number[], target: number, kind: number): Uint8Array {
   const w = new Writer();
   w.uvarint(ids.length);
   for (const id of ids) w.uvarint(id);
   w.uvarint(target);
+  w.uvarint(kind);
   return w.out();
+}
+
+// repairPayload: group of villagers continues one building under
+// construction. Same wire shape as attackPayload with TargetKind.Building.
+export function repairPayload(ids: number[], building: number): Uint8Array {
+  return attackPayload(ids, building, TargetKind.Building);
 }
 
 // patrolPayload: group ping-pong patrol to a tile (1/16 tile units).

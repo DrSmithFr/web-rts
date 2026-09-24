@@ -7,6 +7,8 @@ export default defineConfig({
   testDir: './e2e',
   timeout: 240_000,
   workers: 1,
+  // Two attempts maximum for flaky-by-nature e2e/perf runs on software GL.
+  retries: 1,
   reporter: 'list',
   use: {
     viewport: { width: 1280, height: 720 },

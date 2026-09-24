@@ -103,6 +103,33 @@
       "trainFood": 0,
       "trainTicks": 0,
       "minEra": 4
+    },
+    {
+      "id": 9,
+      "key": "sawmill",
+      "costWood": 60,
+      "costStone": 20,
+      "buildTicks": 80,
+      "popRoom": 0,
+      "size": 2,
+      "dropoff": false,
+      "trainFood": 0,
+      "trainTicks": 0,
+      "minEra": 0
+    },
+    {
+      "id": 10,
+      "key": "farm",
+      "costWood": 40,
+      "costStone": 0,
+      "buildTicks": 40,
+      "popRoom": 0,
+      "size": 1,
+      "dropoff": false,
+      "trainFood": 0,
+      "trainTicks": 0,
+      "minEra": 0,
+      "farmFoodMilli": 20
     }
   ]
 }

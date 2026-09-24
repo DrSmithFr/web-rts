@@ -306,7 +306,7 @@ func recordCombat(path string, seed uint64, ticks, noopEvery uint32) error {
 	s := &staged{r: &Replay{Seed: seed, Ticks: ticks}, probe: probe}
 
 	// tick 1: deer hunt plus full gather on both sides
-	s.push(0, orders.Attack, orders.AttackPayload([]uint32{uint32(p0[0])}, uint32(deer)))
+	s.push(0, orders.Attack, orders.AttackPayload([]uint32{uint32(p0[0])}, uint32(deer), orders.TargetUnit))
 	for _, id := range []entity.ID{p0[1], p0[2]} {
 		if n := nearestNode(probe, probe.Units().Get(id), resource.Food); n != 0 {
 			s.push(0, orders.Gather, orders.GatherPayload(uint32(id), uint32(n)))
@@ -371,7 +371,7 @@ func recordCombat(path string, seed uint64, ticks, noopEvery uint32) error {
 			})
 			if len(atkIDs) > 0 && len(tgt) > 0 {
 				atk0 = true
-				s.push(0, orders.Attack, orders.AttackPayload(atkIDs, tgt[0]))
+				s.push(0, orders.Attack, orders.AttackPayload(atkIDs, tgt[0], orders.TargetUnit))
 			}
 		}
 		s.probe.Step(s.due)

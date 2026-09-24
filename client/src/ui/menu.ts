@@ -3,6 +3,9 @@
 // every boot path stays parameter-driven (and E2E tests can bypass the
 // menu entirely via query string).
 
+import { t } from '../i18n';
+import { loadVolumes, saveVolumes } from '../audio/util';
+
 const DIFFICULTIES = ['easy', 'standard', 'hard'];
 
 export interface MenuResult {
@@ -126,10 +129,31 @@ export function menuFlow(defaultWs: string): Promise<MenuResult> {
       d.appendChild(back);
       return d;
     };
-    const options = info('Options', [
-      'The simulation is deterministic: share a seed to share a game.',
-      'Multiplayer uses an authoritative relay; hashes guard every tick.',
-    ]);
+    const options = el('div', 'mscreen');
+    options.appendChild(el('div', 'mtitle', 'Options'));
+    const vols = loadVolumes();
+    const volumeRow = (label: string, key: 'music' | 'sfx'): void => {
+      const row = el('div', 'mrow');
+      const lab = el('label', '', `${label}: ${vols[key]}`);
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = '0';
+      input.max = '100';
+      input.value = String(vols[key]);
+      input.addEventListener('input', () => {
+        const v = Number(input.value);
+        vols[key] = v;
+        saveVolumes(vols);
+        lab.textContent = `${label}: ${v}`;
+      });
+      row.append(lab, input);
+      options.appendChild(row);
+    };
+    volumeRow(t('menu.musicVolume'), 'music');
+    volumeRow(t('menu.sfxVolume'), 'sfx');
+    const optionsBack = el('button', 'mbtn ghost', 'Back');
+    optionsBack.addEventListener('click', () => show(main));
+    options.appendChild(optionsBack);
     const credits = info('Credits', [
       'Age of Seeds — a deterministic RTS study.',
       'Sim: Go/WASM. Client: TypeScript/Three.js.',

@@ -82,7 +82,7 @@ type view struct {
 	villagers []viewUnit
 	army      []viewUnit
 	idleVill  []entity.ID
-	myBuild   [9]int
+	myBuild   [11]int
 	buildTile [9][2]int32
 	pop, cap  int32
 	res       [resource.Count]int32
@@ -165,12 +165,17 @@ func dist2(ax, ay, bx, by int32) int64 {
 	return dx*dx + dy*dy
 }
 
-// nearestNode finds the closest node of kind on explored ground.
+// nearestNode finds the closest node of kind on explored ground. Wood
+// nodes of sawmill-gated species (baobab) are only eligible once the bot
+// owns a completed sawmill.
 func (v *view) nearestNode(x, y int32, kind resource.Kind) entity.ID {
 	var best entity.ID
 	bd := int64(1) << 62
 	v.w.Nodes().Each(func(id entity.ID, n *core.Node) {
 		if n.Kind != kind || n.Amount <= 0 || !v.seen(n.TileX, n.TileY) {
+			return
+		}
+		if d := v.w.TreeDefs().Get(n.Tree); d != nil && d.Sawmill && v.myBuild[core.BldSawmill] == 0 {
 			return
 		}
 		if d := dist2(x, y, n.TileX, n.TileY); d < bd {
@@ -398,7 +403,7 @@ func (b *Brain) economy(v *view) []proto.Order {
 			for _, h := range hunters {
 				hunting[entity.ID(h)] = true
 			}
-			out = append(out, mk(v.p, orders.Attack, orders.AttackPayload(hunters, uint32(tgt))))
+			out = append(out, mk(v.p, orders.Attack, orders.AttackPayload(hunters, uint32(tgt), orders.TargetUnit)))
 		} else {
 			// no prey visible: up to two idle villagers drift toward
 			// the last kill site (if fresh) looking for wildlife
@@ -691,7 +696,7 @@ func (b *Brain) waves(v *view) []proto.Order {
 	for _, a := range v.army {
 		ids = append(ids, uint32(a.id))
 	}
-	return []proto.Order{mk(v.p, orders.Attack, orders.AttackPayload(ids, uint32(target.id)))}
+	return []proto.Order{mk(v.p, orders.Attack, orders.AttackPayload(ids, uint32(target.id), orders.TargetUnit))}
 }
 
 func (b *Brain) relicRush(v *view) []proto.Order {

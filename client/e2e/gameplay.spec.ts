@@ -18,7 +18,7 @@ test('build, train and age up from a scripted solo run', async ({ page }) => {
   // send every villager to berries
   await page.evaluate(() => {
     const r = window.__rts;
-    const food = r.nodes().filter((n: any) => n.kind === 3 && n.amount > 0);
+    const food = r.nodes().filter((n: any) => n.kind === 3 && n.tree === 0 && n.amount > 0);
     const vills = r.units().filter((u: any) => u.owner === r.local() && u.kind === 1);
     for (const [i, v] of vills.entries()) {
       r.issue(r.kinds.Gather, r.payload.gather(v.id, food[Math.min(i, food.length - 1)].id));

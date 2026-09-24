@@ -22,12 +22,21 @@ func (w *World) applyAttack(player uint8, p []byte) bool {
 		ids = append(ids, entity.ID(r.Uvarint()))
 	}
 	target := entity.ID(r.Uvarint())
-	if !r.OK() {
+	kind := uint8(r.Uvarint())
+	if !r.OK() || (kind != orders.TargetUnit && kind != orders.TargetBuilding) {
 		return false
 	}
-	t := w.units.Get(target)
-	if t == nil || t.Owner == player {
-		return true // well-formed order at a stale target: no-op
+	switch kind {
+	case orders.TargetBuilding:
+		b := w.buildings.Get(target)
+		if b == nil || b.Owner >= MaxPlayers || b.Owner == player || b.HP <= 0 {
+			return true // stale or own target: no-op
+		}
+	default:
+		t := w.units.Get(target)
+		if t == nil || t.Owner == player || t.HP <= 0 {
+			return true // well-formed order at a stale target: no-op
+		}
 	}
 	for _, id := range ids {
 		u := w.units.Get(id)
@@ -39,6 +48,7 @@ func (w *World) applyAttack(player uint8, p []byte) bool {
 		}
 		u.State = UnitAttack
 		u.AttackTarget = target
+		u.AttackKind = kind
 	}
 	return true
 }
@@ -210,10 +220,25 @@ func (w *World) combatPhase() {
 			return
 		}
 		def := w.udefs.Get(u.DefID)
-		t := w.units.Get(u.AttackTarget)
-		if t == nil || t.Owner == u.Owner || t.HP <= 0 || def == nil || !def.Attacks() {
+		if def == nil || !def.Attacks() {
 			u.State = UnitIdle
 			u.AttackTarget = entity.Nil
+			u.AttackKind = 0
+			return
+		}
+		if u.AttackKind == orders.TargetBuilding {
+			if !w.attackBuilding(id, u, def) {
+				u.State = UnitIdle
+				u.AttackTarget = entity.Nil
+				u.AttackKind = 0
+			}
+			return
+		}
+		t := w.units.Get(u.AttackTarget)
+		if t == nil || t.Owner == u.Owner || t.HP <= 0 {
+			u.State = UnitIdle
+			u.AttackTarget = entity.Nil
+			u.AttackKind = 0
 			return
 		}
 		reach := fixed.F16(def.Range16)
@@ -235,6 +260,7 @@ func (w *World) combatPhase() {
 			if td := w.udefs.Get(t.DefID); td != nil && td.Attacks() && t.State != UnitAttack {
 				t.State = UnitAttack
 				t.AttackTarget = id
+				t.AttackKind = orders.TargetUnit
 			}
 			return
 		}
@@ -273,10 +299,52 @@ func (w *World) combatPhase() {
 		if best != entity.Nil {
 			u.State = UnitAttack
 			u.AttackTarget = best
+			u.AttackKind = orders.TargetUnit
 		}
 	})
 
 	w.processDeaths(dead)
+}
+
+// attackBuilding drives one attacker assigned to an enemy building,
+// approaching it, trading blows with its footprint and levelling it.
+// It returns false when AttackTarget is not a live enemy building.
+func (w *World) attackBuilding(id entity.ID, u *Unit, def *units.Def) bool {
+	b := w.buildings.Get(u.AttackTarget)
+	if b == nil || b.Owner >= MaxPlayers || b.Owner == u.Owner || b.HP <= 0 {
+		return false
+	}
+	bx, by := buildingCenter(b)
+	reach := fixed.F16(def.Range16)
+	if u.Owner < MaxPlayers {
+		reach += fixed.F16(w.players[u.Owner].Mods.Range16[def.Class])
+	}
+	reach += fixed.F16((b.Size>>1)+1) << 16
+	if near(u.X, u.Y, bx, by, reach) {
+		if u.Cooldown > 0 {
+			return true
+		}
+		dmg := def.Damage + w.udefs.BonusFor(def, 0)
+		if u.Owner < MaxPlayers {
+			dmg += w.players[u.Owner].Mods.Dmg[def.Class]
+		}
+		if dmg < 1 {
+			dmg = 1
+		}
+		b.HP -= dmg
+		u.Cooldown = def.Rate
+		if b.HP <= 0 {
+			w.buildings.Free(u.AttackTarget)
+			u.State = UnitIdle
+			u.AttackTarget = entity.Nil
+			u.AttackKind = 0
+		}
+		return true
+	}
+	if !w.followField(u, b.TileX+b.Size>>1, b.TileY+b.Size>>1) {
+		stepToward(&u.X, &u.Y, bx, by, w.speedOf(u))
+	}
+	return true
 }
 
 // processDeaths frees the fallen, drops huntable corpses and redirects
@@ -292,6 +360,7 @@ func (w *World) processDeaths(dead []entity.ID) {
 		if def != nil && def.CorpseFood > 0 {
 			cid, n := w.nodes.Create()
 			n.Kind = resource.Food
+			n.Corpse = true
 			n.X, n.Y = u.X, u.Y
 			n.TileX, n.TileY = tileOf(u.X), tileOf(u.Y)
 			n.Amount = def.CorpseFood
@@ -307,6 +376,7 @@ func (w *World) processDeaths(dead []entity.ID) {
 				return
 			}
 			g.AttackTarget = entity.Nil
+			g.AttackKind = 0
 			if corpse != entity.Nil && g.Owner != OwnerNeutral && g.Kind == KindVillager {
 				g.Target = corpse
 				g.State = UnitGather

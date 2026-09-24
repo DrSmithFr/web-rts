@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	assets "rts"
+	"rts/sim/fixed"
 )
 
 // Def is one building definition.
@@ -24,6 +25,15 @@ type Def struct {
 	TrainFood  int32  `json:"trainFood"`
 	TrainTicks int32  `json:"trainTicks"`
 	MinEra     int32  `json:"minEra"`
+	// FarmFoodMilli is the base food output per tick in milli (20 =
+	// 0.020 food/tick at 1.0x), multiplied in-game by the biome's farm
+	// multiplier under the building's tile. Zero means not a farm.
+	FarmFoodMilli int32 `json:"farmFoodMilli"`
+}
+
+// FarmYield16 returns the base per-tick farm yield in 16.16 fixed point.
+func (d *Def) FarmYield16() fixed.F16 {
+	return fixed.F16((int64(d.FarmFoodMilli) << 16) / 1000)
 }
 
 // TrainsVillager reports whether this building can train villagers.
@@ -80,6 +90,8 @@ func Parse(raw []byte) (*Table, error) {
 			return nil, fmt.Errorf("building %s: training needs a food cost", d.Key)
 		case d.MinEra < 0 || d.MinEra > 4:
 			return nil, fmt.Errorf("building %s: minEra out of range", d.Key)
+		case d.FarmFoodMilli < 0:
+			return nil, fmt.Errorf("building %s: negative farm yield", d.Key)
 		}
 		if d.ID < 0x100 {
 			seen[d.ID] = true
