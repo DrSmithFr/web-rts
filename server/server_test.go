@@ -420,7 +420,7 @@ func TestRelicVictoryVsBots(t *testing.T) {
 		tick := *tk.Tick
 		pl := &m.w.Players()[0]
 
-		if tick-lastRegath > 300 && (pl.Res[resource.Food] < 320 || pl.Res[resource.Gold] < 20) {
+		if !lanced && tick-lastRegath > 300 && (pl.Res[resource.Food] < 320 || pl.Res[resource.Gold] < 20) {
 			lastRegath = tick
 			gather(v0[1], resource.Food)
 			gather(v0[2], resource.Gold)
@@ -434,24 +434,35 @@ func TestRelicVictoryVsBots(t *testing.T) {
 			if doneBarracks && !lanced &&
 				pl.Res[resource.Food] >= 60 && pl.Res[resource.Gold] >= 20 {
 				lanced = true
-				d.order(orders.Train, orders.TrainPayload(uint32(d.completeBuilding(0, 4)), 2))
+				d.order(orders.Train, orders.TrainPayload(uint32(d.completeBuilding(0, 4)), 2, 2))
 			}
 		}
 		if lanced && relicStage < core.RelicCount && tick-lastMarch > 100 {
-			var lancer entity.ID
+			var ids []uint32
+			var firstLance uint32
 			m.w.Units().Each(func(id entity.ID, u *core.Unit) {
-				if u.Owner == 0 && u.DefID == 2 && u.HP > 0 {
-					lancer = id
+				if u.Owner == 0 && u.HP > 0 && (u.DefID == 2 || u.DefID == 1) {
+					if u.DefID == 2 && firstLance == 0 {
+						firstLance = uint32(id)
+					}
+					ids = append(ids, uint32(id))
 				}
 			})
-			if lancer != 0 {
+			// wolves only hunt prey without escorts: the relic party
+			// travels with the whole home village so nothing is alone;
+			// the formation parks the lancer on a ring tile, so the
+			// march also walks it onto the relic tile itself to claim
+			if firstLance != 0 && len(ids) >= 4 {
 				rels := m.w.Relics()
 				if rels[relicStage].Owner == 0 {
 					relicStage++
 				} else {
 					lastMarch = tick
-					d.order(orders.MoveGroup, orders.MoveGroupPayload([]uint32{uint32(lancer)},
+					d.order(orders.MoveGroup, orders.MoveGroupPayload(ids,
 						uint16(rels[relicStage].X*16+8), uint16(rels[relicStage].Y*16+8)))
+					d.order(orders.Move, orders.MovePayload([]orders.MoveItem{
+						{ID: firstLance, X16: uint16(rels[relicStage].X*16 + 8), Y16: uint16(rels[relicStage].Y*16 + 8)},
+					}))
 				}
 			}
 		}

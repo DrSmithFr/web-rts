@@ -137,7 +137,10 @@ func scan(w *core.World, p uint8) *view {
 			return
 		}
 		if u.Owner == core.OwnerNeutral {
-			if u.DefID == core.DefDeer || u.DefID == core.DefBoar {
+			// bears and wolves are hunters, not game; boars charge and
+			// gore hunting parties — only harmless game is targeted
+			switch u.DefID {
+			case core.DefDeer, core.DefRabbit, core.DefSheep:
 				v.prey = append(v.prey, viewUnit{id: id, x: tx, y: ty})
 			}
 			return
@@ -250,9 +253,6 @@ func (b *Brain) nearestPrey(v *view, x, y int32) entity.ID {
 			continue
 		}
 		d := dist2(x, y, pr.x, pr.y)
-		if w.DefID == core.DefBoar {
-			d *= 4
-		}
 		if d < bd {
 			bd, best = d, pr.id
 		}
@@ -279,28 +279,28 @@ func phaseSeek(id entity.ID) uint32 {
 	return uint32(uint32(id) * 2654435761 >> 24)
 }
 
-// huntTarget picks prey for the idle squad: deer are free kills, but
-// boars (40 HP, armor, bite back at 6/crush) need at least four
-// villagers. Returns the best deer regardless of squad size.
+// huntTarget picks prey for the idle squad: deer, sheep and rabbits are
+// free kills (nearest first); boars (40 HP, armor, bite back at 6/crush)
+// are left alone. Returns ok=false when no harmless game is visible.
 func (b *Brain) huntTarget(v *view, squad int) (entity.ID, bool) {
-	var deer, boar entity.ID
-	dd, bd := int64(1)<<62, int64(1)<<62
+	var game entity.ID
+	dd := int64(1) << 62
 	for _, pr := range v.prey {
 		u := v.w.Units().Get(pr.id)
 		if u == nil || u.HP <= 0 {
 			continue
 		}
+		if u.DefID != core.DefDeer && u.DefID != core.DefSheep && u.DefID != core.DefRabbit {
+			continue
+		}
 		d := dist2(int32(u.X)>>16, int32(u.Y)>>16, pr.x, pr.y)
-		if u.DefID == core.DefDeer && d < dd {
-			dd, deer = d, pr.id
-		} else if u.DefID == core.DefBoar && d < bd {
-			bd, boar = d, pr.id
+		if d < dd {
+			dd, game = d, pr.id
 		}
 	}
-	_ = boar
 	_ = squad
-	if deer != 0 {
-		return deer, true
+	if game != 0 {
+		return game, true
 	}
 	return 0, false
 }

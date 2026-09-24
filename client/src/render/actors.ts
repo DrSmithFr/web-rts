@@ -39,6 +39,7 @@ const RING_CAP = 96;
 export const STATE_GATHER = 2;
 export const STATE_BUILD = 4;
 export const STATE_ATTACK = 5;
+export const STATE_SLEEP = 9;
 
 interface Rig {
   body: THREE.InstancedMesh;
@@ -222,8 +223,11 @@ export function buildActors(size: number, heights: Uint16Array, camera: THREE.Ca
         const camD = camera.position.distanceTo(posV);
         const far = THREE.MathUtils.clamp((camD - 26) / 84, 0, 1);
         const unitScale = jitter * (1 + 0.65 * far);
+        // sleeping animals settle onto the ground: the flattened base
+        // pose carries through to the leg parts
+        const flat = u.state === STATE_SLEEP ? 0.42 : 1;
         quat.setFromAxisAngle(YAXIS, st.yaw);
-        scaleV.set(unitScale, unitScale, unitScale);
+        scaleV.set(unitScale, unitScale * flat, unitScale);
         baseM.compose(posV, quat, scaleV);
 
         unitPos.set(u.id, new THREE.Vector3(u.x, py, u.y));

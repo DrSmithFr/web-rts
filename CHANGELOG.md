@@ -9,6 +9,12 @@ Phase 10: procedural map generation spec — biomes, tree species, sawmill
 gating and biome-driven agriculture. Simulation-affecting: map format
 `rts.map/v4`, world `rts.world/v7`, replays regenerated.
 
+Phase 11: the wildlife ecosystem — rabbit, sheep, bear, wolf and black
+wolf join deer and boar, all driven by sleep schedules, habitats, flee
+and aggro radii, leashes and settlement fear, with campfires as shelters.
+Simulation-affecting: map format `rts.map/v6`, world `rts.world/v11`,
+replays regenerated.
+
 ### Added
 
 - `data/trees.json` and `data/biomes.json` (embedded in `assets.go`):
@@ -83,6 +89,39 @@ gating and biome-driven agriculture. Simulation-affecting: map format
   point lights) cast a warm flickering glow that strengthens with the
   night.
 
+- `sim/core` wildlife AI, driven entirely by new `data/units.json`
+  stat fields — sleep schedule (`"day"`/`"night"`, with a reduced wake
+  radius), flee radius/clear-distance, aggro, leash to the spawn den,
+  habitat, campfire immunity and a prey list — so every species tunes
+  in data, adds no RNG streams and stays hash-stable.
+- Five new species: rabbit and sheep (prey near every base), the bear
+  (a rare rock-dwelling daytime sleeper, immune to campfires), the
+  grey wolf (hunts by day) and the black wolf (hunts by night); wolves
+  only ever attack isolated prey, skipping any unit escorted by three
+  or more companions within four tiles.
+- Deer and boar re-tuned onto the same fields: deer flee forest-first
+  at night, boars charge within six tiles but lose their aggro inside
+  a campfire's seven-tile aura — completed campfires keep passive
+  animals out entirely, and aggressive ones retreat.
+- Habitat-first den placement: deer, sheep and rabbits form the larder
+  around each spawn, while every aggressive den (boar, wolf, black
+  wolf, bear) sits beyond `WildZone` (60 tiles) from all spawns, bears
+  capped at three on mountain rock; aggressive dens also stay beyond
+  `RelicClear` (40 tiles) from every relic, so contesting the center
+  is a journey, not a siege of a den.
+- All five new species get low-poly models, palette tints and i18n
+  names; sleeping animals visibly settle onto the ground.
+
+### Changed
+
+- Bot hunting prey lists exclude boars — they charge and gore hunting
+  parties; bots take deer, rabbits and sheep instead.
+- Neutral animals fight back: struck or roused animals bite the nearest
+  attacker (still respecting the wolf escort rule), and wolves predate
+  deer and rabbits for real — neutral-versus-neutral combat is allowed.
+- The relic-victory functional test now marches its lancer with the
+  whole home village: an escorted party deters wolves by design.
+
 ### Fixed
 
 - Nodes (trees, ore, berries) are placed with the bilinear ground sample
@@ -134,6 +173,13 @@ gating and biome-driven agriculture. Simulation-affecting: map format
   testing policy).
 - Vitest: audio generation specs (seed reproducibility, diatonic-only
   progressions, motif bounds and mutation size, mood/layer table).
+- `sim/core/wildlife_test.go`: thirteen behavior contracts — sleep
+  schedules and wake radii, the campfire shield (repulse, aggro-drop,
+  bear immunity), boar charges, bear leash, the wolf isolation rule and
+  the grey/black day-night hunter split, rabbit predation corpses.
+- `sim/worldgen/fauna_test.go`: habitat, WildZone and RelicClear
+  contracts over 20 seeds; all five replays re-recorded and verified on
+  `rts.map/v6`/`rts.world/v11` with native/wasm parity holding.
 
 ### Notes
 

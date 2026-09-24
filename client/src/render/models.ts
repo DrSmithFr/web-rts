@@ -248,6 +248,58 @@ function boar(): UnitModel {
   return { body: body.merge() as THREE.BufferGeometry, insignia: null, anim };
 }
 
+function rabbit(): UnitModel {
+  const body = new Builder();
+  body.box(0.2, 0.17, 0.26, 0, 0.16, -0.02, PALETTE.rabbit);
+  body.box(0.12, 0.12, 0.12, 0, 0.24, 0.17, PALETTE.rabbit);
+  body.box(0.035, 0.12, 0.04, -0.04, 0.36, 0.16, PALETTE.rabbit);
+  body.box(0.035, 0.12, 0.04, 0.04, 0.36, 0.16, PALETTE.rabbit);
+  body.box(0.05, 0.05, 0.05, 0, 0.16, -0.18, 0xf4efe6);
+  const anim: AnimPart[] = [];
+  quadLegs(anim, PALETTE.rabbit, 0.09, true, 0.12, 0.05, 0.05);
+  quadLegs(anim, PALETTE.rabbit, -0.09, false, 0.14, 0.06, 0.06);
+  return { body: body.merge() as THREE.BufferGeometry, insignia: null, anim };
+}
+
+function sheep(): UnitModel {
+  const body = new Builder();
+  body.box(0.3, 0.26, 0.44, 0, 0.34, 0, PALETTE.sheep);
+  body.box(0.13, 0.13, 0.12, 0, 0.32, 0.3, PALETTE.sheepFace);
+  body.box(0.05, 0.05, 0.03, -0.085, 0.37, 0.29, PALETTE.sheepFace);
+  body.box(0.05, 0.05, 0.03, 0.085, 0.37, 0.29, PALETTE.sheepFace);
+  const anim: AnimPart[] = [];
+  quadLegs(anim, PALETTE.sheepFace, 0.15, true, 0.22, 0.07, 0.08);
+  quadLegs(anim, PALETTE.sheepFace, -0.15, false, 0.22, 0.07, 0.08);
+  return { body: body.merge() as THREE.BufferGeometry, insignia: null, anim };
+}
+
+function bear(): UnitModel {
+  const body = new Builder();
+  body.box(0.42, 0.4, 0.72, 0, 0.44, 0, PALETTE.bear);
+  body.box(0.24, 0.18, 0.16, 0, 0.4, 0.44, PALETTE.bear);
+  body.box(0.12, 0.08, 0.1, 0, 0.42, 0.52, 0x7a5c40);
+  body.box(0.07, 0.07, 0.04, -0.12, 0.54, 0.4, PALETTE.bear);
+  body.box(0.07, 0.07, 0.04, 0.12, 0.54, 0.4, PALETTE.bear);
+  const anim: AnimPart[] = [];
+  quadLegs(anim, PALETTE.bear, 0.24, true, 0.34, 0.12, 0.12);
+  quadLegs(anim, PALETTE.bear, -0.24, false, 0.34, 0.12, 0.12);
+  return { body: body.merge() as THREE.BufferGeometry, insignia: null, anim };
+}
+
+function wolfOf(hex: number, maneHex: number): UnitModel {
+  const body = new Builder();
+  body.box(0.24, 0.24, 0.54, 0, 0.36, 0, hex);
+  body.box(0.14, 0.13, 0.18, 0, 0.42, 0.34, hex);
+  body.box(0.08, 0.07, 0.1, 0, 0.38, 0.48, maneHex);
+  body.box(0.05, 0.06, 0.03, -0.07, 0.51, 0.31, hex);
+  body.box(0.05, 0.06, 0.03, 0.07, 0.51, 0.31, hex);
+  body.box(0.06, 0.06, 0.22, 0, 0.4, -0.34, maneHex);
+  const anim: AnimPart[] = [];
+  quadLegs(anim, hex, 0.19, true, 0.3, 0.07, 0.08);
+  quadLegs(anim, hex, -0.19, false, 0.32, 0.07, 0.08);
+  return { body: body.merge() as THREE.BufferGeometry, insignia: null, anim };
+}
+
 const UNIT_MODELS: Record<number, () => UnitModel> = {
   1: villager,
   2: lancer,
@@ -257,6 +309,11 @@ const UNIT_MODELS: Record<number, () => UnitModel> = {
   6: boar,
   7: knight,
   8: crossbowman,
+  9: rabbit,
+  10: sheep,
+  11: bear,
+  12: () => wolfOf(PALETTE.wolf, 0xb9bdc4),
+  13: () => wolfOf(PALETTE.blackWolf, 0x1f2126),
 };
 
 const modelCache = new Map<number, UnitModel>();
@@ -270,7 +327,7 @@ export function unitModel(def: number): UnitModel {
   return m;
 }
 
-export const UNIT_DEFS = [1, 2, 3, 4, 5, 6, 7, 8];
+export const UNIT_DEFS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 
 // --- buildings ---------------------------------------------------------
 

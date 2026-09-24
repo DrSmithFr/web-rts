@@ -101,54 +101,6 @@ func (w *World) patrolStep(u *Unit) {
 	stepToward(&u.X, &u.Y, u.TX, u.TY, w.speedOf(u))
 }
 
-// wanderStep is the idle animal loop: panic into flight when a threat
-// gets close, otherwise retarget a few tiles away every so often.
-func (w *World) wanderStep(id entity.ID, u *Unit) {
-	def := w.udefs.Get(u.DefID)
-	if def != nil && def.Flee {
-		if t := w.nearestThreat(u, FleeRadius); t != nil {
-			u.State = UnitFlee
-			return
-		}
-	}
-	if u.TX == 0 && u.TY == 0 {
-		u.TX, u.TY = u.X, u.Y // fresh spawn: no destination yet
-	}
-	if (uint32(id)+uint32(w.tick)*7)%40 == 0 {
-		h := mix64(uint64(w.seed) ^ uint64(id)*0x9e3779b97f4a7c15 ^ uint64(w.tick)*0xff51afd7ed558ccd)
-		tx := tileOf(u.X) + int32(h%7) - 3
-		ty := tileOf(u.Y) + int32((h>>3)%7) - 3
-		if w.tileWalkable(tx, ty) {
-			u.TX, u.TY = tileCenter(tx), tileCenter(ty)
-		}
-	}
-	if near(u.X, u.Y, u.TX, u.TY, 2048) {
-		return
-	}
-	stepToward(&u.X, &u.Y, u.TX, u.TY, w.speedOf(u))
-}
-
-// fleeStep runs away from the closest threat until it is far enough away.
-func (w *World) fleeStep(u *Unit) {
-	t := w.nearestThreat(u, FleeClearRadius)
-	if t == nil {
-		u.State = UnitWander
-		return
-	}
-	// Mirror point behind the unit; fall back to axis-away, then stand.
-	ax, ay := u.X.Add(u.X.Sub(t.X)), u.Y.Add(u.Y.Sub(t.Y))
-	if !w.tileWalkable(tileOf(ax), tileOf(ay)) {
-		if w.tileWalkable(tileOf(ax), tileOf(u.Y)) {
-			ay = u.Y
-		} else if w.tileWalkable(tileOf(u.X), tileOf(ay)) {
-			ax = u.X
-		} else {
-			return
-		}
-	}
-	stepToward(&u.X, &u.Y, ax, ay, w.speedOf(u))
-}
-
 // nearestThreat returns the closest hostile player unit within radius
 // tiles (ties by lower id), or nil.
 func (w *World) nearestThreat(u *Unit, radius int32) *Unit {
@@ -235,7 +187,7 @@ func (w *World) combatPhase() {
 			return
 		}
 		t := w.units.Get(u.AttackTarget)
-		if t == nil || t.Owner == u.Owner || t.HP <= 0 {
+		if t == nil || t.HP <= 0 || (t.Owner == u.Owner && u.Owner != OwnerNeutral) {
 			u.State = UnitIdle
 			u.AttackTarget = entity.Nil
 			u.AttackKind = 0
@@ -251,6 +203,9 @@ func (w *World) combatPhase() {
 			}
 			t.HP -= w.attackDamage(def, u.Owner, t)
 			u.Cooldown = def.Rate
+			if t.State == UnitSleep {
+				t.State = UnitWander // a struck animal rouses at once
+			}
 			if t.HP <= 0 {
 				markDead(u.AttackTarget)
 				return
@@ -262,6 +217,10 @@ func (w *World) combatPhase() {
 				t.AttackTarget = id
 				t.AttackKind = orders.TargetUnit
 			}
+			return
+		}
+		if u.Owner == OwnerNeutral {
+			w.wildChase(u, def, t) // animals step straight, no flow field
 			return
 		}
 		if !w.followField(u, tileOf(t.X), tileOf(t.Y)) {

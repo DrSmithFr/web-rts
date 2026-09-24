@@ -27,6 +27,7 @@ const (
 	UnitPatrol uint8 = 6
 	UnitWander uint8 = 7
 	UnitFlee   uint8 = 8
+	UnitSleep  uint8 = 9
 )
 
 // Unit def ids fixed by data/units.json order.
@@ -39,6 +40,11 @@ const (
 	DefBoar        uint16 = 6
 	DefKnight      uint16 = 7
 	DefCrossbowman uint16 = 8
+	DefRabbit      uint16 = 9
+	DefSheep       uint16 = 10
+	DefBear        uint16 = 11
+	DefWolf        uint16 = 12
+	DefBlackWolf   uint16 = 13
 )
 
 // Building def ids fixed by data/buildings.json order.
@@ -100,6 +106,20 @@ const (
 	// FleeClearRadius is the distance at which a fleeing animal calms down.
 	FleeClearRadius int32 = 7
 
+	// CampfireAura is the radius in tiles where completed campfires
+	// repulse shy animals and calm aggressive ones (bears are immune).
+	CampfireAura int32 = 7
+
+	// SleepWake is how much smaller the wake-up detection radius is
+	// compared to the species detection radius while sleeping.
+	SleepWake int32 = 3
+
+	// PreyGuardRadius measures how close friendly units must stand to
+	// count as escorting a prey; PreyEscortMax escorts means the prey is
+	// grouped and predators look for an isolated target instead.
+	PreyGuardRadius int32 = 4
+	PreyEscortMax   int32 = 3
+
 	// MaxFields caps concurrent flow fields; the oldest is evicted.
 	MaxFields = 64
 
@@ -136,6 +156,8 @@ type Unit struct {
 	State  uint8
 	X, Y   fixed.F16
 	TX, TY fixed.F16
+	// HomeX/HomeY is the spawn point; leashed species roam near it.
+	HomeX, HomeY fixed.F16
 	// PatrolX/Y is the other end of a patrol segment.
 	PatrolX, PatrolY fixed.F16
 	// Target is a gather node or build site.

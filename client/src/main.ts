@@ -55,6 +55,17 @@ import { loadVolumes } from './audio/util';
 
 let LOCAL_PLAYER = 0;
 const NEUTRAL_OWNER = 255;
+
+// Fauna body colors (keyed by unit def id) for actor insignia/HP tint.
+const ANIMAL_TINTS: Record<number, number> = {
+  5: PALETTE.deer,
+  6: PALETTE.boar,
+  9: PALETTE.rabbit,
+  10: PALETTE.sheep,
+  11: PALETTE.bear,
+  12: PALETTE.wolf,
+  13: PALETTE.blackWolf,
+};
 // unit and building entity ids collide (one counter per sim store), so
 // building ids are offset inside the client-side selection
 const BKEY = 1 << 30;
@@ -1300,9 +1311,7 @@ try {
         const def = udefById.get(u.def);
         const color =
           u.owner === NEUTRAL_OWNER
-            ? u.def === 6
-              ? PALETTE.boar
-              : PALETTE.deer
+            ? ANIMAL_TINTS[u.def] ?? PALETTE.deer
             : PLAYER_COLORS[u.owner % PLAYER_COLORS.length];
         const hpFrac = def && def.hp > 0 ? u.hp / def.hp : 1;
         renderUnits.push({

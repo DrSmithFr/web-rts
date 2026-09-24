@@ -213,6 +213,7 @@ func (w *World) spawnUnit(owner uint8, defID uint16, x, y fixed.F16) entity.ID {
 	u.Kind = def.Kind()
 	u.Owner = owner
 	u.X, u.Y = x, y
+	u.HomeX, u.HomeY = x, y
 	u.HP = def.HP
 	if owner < MaxPlayers {
 		w.players[owner].Pop += def.PopCost
@@ -592,15 +593,15 @@ func (w *World) updateUnits() {
 		if u.State == UnitIdle && u.Owner == OwnerNeutral {
 			u.State = UnitWander
 		}
+		if u.Owner == OwnerNeutral && u.Kind == KindAnimal {
+			w.wildlifeStep(id, u)
+			return
+		}
 		switch u.State {
 		case UnitMove:
 			w.moveUnit(u)
 		case UnitPatrol:
 			w.patrolStep(u)
-		case UnitWander:
-			w.wanderStep(id, u)
-		case UnitFlee:
-			w.fleeStep(u)
 		case UnitGather:
 			n := w.nodes.Get(u.Target)
 			if n == nil || n.Amount <= 0 {

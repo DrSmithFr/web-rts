@@ -58,6 +58,12 @@ export const PALETTE = {
 
   deer: 0xb08a5a,
   boar: 0x6f6257,
+  rabbit: 0xc9b9a2,
+  sheep: 0xe9e4d8,
+  sheepFace: 0xb5a992,
+  bear: 0x503b2a,
+  wolf: 0x8b9098,
+  blackWolf: 0x33363d,
   mount: 0x6b4f3a,
 
   // biome ground tints (blended into grass/forest tiles)

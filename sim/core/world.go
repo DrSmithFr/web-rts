@@ -33,7 +33,7 @@ import (
 
 const (
 	// WorldVersion bumps whenever the hash layout changes.
-	WorldVersion uint64 = 9
+	WorldVersion uint64 = 10
 
 	// HashPeriodTicks is how often peers exchange state hashes on the
 	// wire (and how often replays checkpoint).
@@ -42,7 +42,7 @@ const (
 	// MaxPlayers is the fixed player table size.
 	MaxPlayers = 8
 
-	hashLabel = "rts.world/v10"
+	hashLabel = "rts.world/v11"
 )
 
 // World is the full simulation state.
@@ -292,6 +292,8 @@ func (w *World) Hash() uint64 {
 		h.WriteU32(uint32(u.State))
 		h.WriteU32(uint32(u.X))
 		h.WriteU32(uint32(u.Y))
+		h.WriteU32(uint32(u.HomeX))
+		h.WriteU32(uint32(u.HomeY))
 		h.WriteU32(uint32(u.Target))
 		h.WriteU32(uint32(u.AttackTarget))
 		h.WriteU32(uint32(u.AttackKind))

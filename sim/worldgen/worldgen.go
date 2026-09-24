@@ -85,7 +85,18 @@ const (
 	minBiomes         = 3
 	spawnTreeSp uint8 = tree.Birch // starter ring species for every player
 
-	hashLabel = "rts.map/v4"
+	// WildZone keeps aggressive wildlife (boar, wolf, black wolf, bear)
+	// this many tiles from every spawn: safe starter grounds, deadly
+	// wilderness.
+	WildZone = 60
+
+	// RelicClear keeps aggressive dens this many tiles from every relic:
+	// a leash-bound wolf (leash 14) or bear (leash 20) can never wander
+	// into the relic cluster, and contesting the center stays a journey,
+	// not a siege of a den.
+	RelicClear = 40
+
+	hashLabel = "rts.map/v6"
 )
 
 // ErrNoSpawns means the map does not contain enough separated land patches
@@ -110,8 +121,13 @@ type Animal struct {
 
 // Animal unit def ids mirrored from data/units.json.
 const (
-	DefDeer uint16 = 5
-	DefBoar uint16 = 6
+	DefDeer      uint16 = 5
+	DefBoar      uint16 = 6
+	DefRabbit    uint16 = 9
+	DefSheep     uint16 = 10
+	DefBear      uint16 = 11
+	DefWolf      uint16 = 12
+	DefBlackWolf uint16 = 13
 )
 
 // RelicCount is the number of victory relics placed near the map center.
@@ -237,10 +253,11 @@ func Generate(seed uint64, size, players int) (*Map, error) {
 	}
 	berries := stampBerries(g, spawns)
 	nodes := placeNodes(g, seed, berries, ringTrees, biomes, bdefs, tdefs)
-	animals := placeAnimals(g, spawns)
+	relics := placeRelics(g)
+	animals := placeAnimals(g, spawns, relics)
 
 	m := &Map{grid: g, biomes: biomes, spawns: spawns, nodes: nodes, animals: animals}
-	m.relics = placeRelics(g)
+	m.relics = relics
 	m.digest = hashMap(m)
 	return m, nil
 }
@@ -856,35 +873,131 @@ func placeNodes(g *terrain.Grid, seed uint64, berries [][2]int, ringTrees map[[2
 	return nodes
 }
 
-// placeAnimals puts huntable wildlife around each spawn: three deer and
-// two boar at fixed ladder offsets, skipping tiles that are not open
-// ground so every start offers the same hunt.
-func placeAnimals(g *terrain.Grid, spawns [][2]int) []Animal {
-	deerOffsets := [][2]int{{10, 2}, {2, 11}, {-11, -3}, {12, 6}, {-6, 12}, {13, -2}}
-	boarOffsets := [][2]int{{12, -4}, {-9, 8}, {-12, -6}, {10, 10}, {-13, 4}, {6, -13}}
+// placeAnimals scatters species around each spawn by habitat: deer in
+// forest, sheep on plain, rabbit on plain or forest — the neighborhood
+// larder. Everything with teeth (boar, wolf, black wolf, bear) lives
+// beyond WildZone tiles from every spawn: the starting economy stays a
+// hunting ground, the wilds beyond stay deadly. Scans are radius-band
+// row-major, so placement is deterministic without touching the RNG.
+func placeAnimals(g *terrain.Grid, spawns [][2]int, relics [RelicCount][2]int32) []Animal {
 	var out []Animal
-	place := func(s [2]int, offs [][2]int, def uint16, want int) {
+	taken := map[[2]int]bool{}
+	place := func(s [2]int, def uint16, want, minR, maxR, minSpawnDist, minRelicDist int, types ...terrain.Type) {
 		done := 0
-		for _, o := range offs {
-			if done == want {
-				break
-			}
-			x, y := s[0]+o[0], s[1]+o[1]
-			if !g.InBounds(x, y) {
-				continue
-			}
-			switch g.Tile(x, y) {
-			case terrain.Grass, terrain.Forest:
-				out = append(out, Animal{X: int32(x), Y: int32(y), Def: def})
-				done++
+		for r := minR; r <= maxR && done < want; r++ {
+			for dy := -r; dy <= r && done < want; dy++ {
+				for dx := -r; dx <= r && done < want; dx++ {
+					if iabs(dx) != r && iabs(dy) != r {
+						continue
+					}
+					x, y := s[0]+dx, s[1]+dy
+					if !g.InBounds(x, y) || taken[[2]int{x, y}] {
+						continue
+					}
+					if !oneOf(g.Tile(x, y), types) {
+						continue
+					}
+					if minSpawnDist > 0 {
+						ok := true
+						for _, s2 := range spawns {
+							if iabs(x-s2[0]) < minSpawnDist || iabs(y-s2[1]) < minSpawnDist {
+								ok = false
+								break
+							}
+						}
+						if !ok {
+							continue
+						}
+					}
+					if minRelicDist > 0 {
+						ok := true
+						for _, rel := range relics {
+							if iabs(x-int(rel[0])) < minRelicDist || iabs(y-int(rel[1])) < minRelicDist {
+								ok = false
+								break
+							}
+						}
+						if !ok {
+							continue
+						}
+					}
+					taken[[2]int{x, y}] = true
+					out = append(out, Animal{X: int32(x), Y: int32(y), Def: def})
+					done++
+				}
 			}
 		}
 	}
+	wood := []terrain.Type{terrain.Forest}
+	grass := []terrain.Type{terrain.Grass}
+	open := []terrain.Type{terrain.Grass, terrain.Forest}
+	const wildZones = WildZone
 	for _, s := range spawns {
-		place(s, deerOffsets, DefDeer, 3)
-		place(s, boarOffsets, DefBoar, 2)
+		place(s, DefDeer, 3, 8, 15, 0, 0, wood...)
+		place(s, DefSheep, 2, 6, 13, 0, 0, grass...)
+		place(s, DefRabbit, 2, 6, 13, 0, 0, open...)
+		place(s, DefBoar, 1, 60, 90, wildZones, RelicClear, wood...)
+		place(s, DefWolf, 1, 64, 100, wildZones, RelicClear, wood...)
+		place(s, DefBlackWolf, 1, 70, 110, wildZones, RelicClear, wood...)
+	}
+	return append(out, placeBears(g, spawns, relics)...)
+}
+
+// placeBears dens one bear per rock massif: the first rock tile at least
+// WildZone tiles (Chebyshev) from every spawn and 12 from any other
+// bear, capped at three per map — mountains stay rare and deadly.
+func placeBears(g *terrain.Grid, spawns [][2]int, relics [RelicCount][2]int32) []Animal {
+	const maxBears = 3
+	var out []Animal
+	for y := 0; y < g.Size(); y++ {
+		for x := 0; x < g.Size(); x++ {
+			if len(out) == maxBears {
+				return out
+			}
+			if g.Tile(x, y) != terrain.Rock {
+				continue
+			}
+			ok := true
+			for _, s := range spawns {
+				if iabs(x-s[0]) < WildZone || iabs(y-s[1]) < WildZone {
+					ok = false
+					break
+				}
+			}
+			for _, rel := range relics {
+				if ok && (iabs(x-int(rel[0])) < RelicClear || iabs(y-int(rel[1])) < RelicClear) {
+					ok = false
+					break
+				}
+			}
+			for _, b := range out {
+				if ok && iabs(x-int(b.X)) < 12 && iabs(y-int(b.Y)) < 12 {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				out = append(out, Animal{X: int32(x), Y: int32(y), Def: DefBear})
+			}
+		}
 	}
 	return out
+}
+
+func oneOf(t terrain.Type, types []terrain.Type) bool {
+	for _, k := range types {
+		if k == t {
+			return true
+		}
+	}
+	return false
+}
+
+func iabs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // hashMap digests the full map state: layout, terrain, biomes, heights,

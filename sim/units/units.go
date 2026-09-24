@@ -42,28 +42,40 @@ type Bonus struct {
 // Def is one unit definition. TrainBy is the building def id that can
 // train this unit (0 for trainable-nowhere animals).
 type Def struct {
-	ID          uint16  `json:"id"`
-	Key         string  `json:"key"`
-	Class       uint8   `json:"class"`
-	HP          int32   `json:"hp"`
-	Speed16     int32   `json:"speed16"`
-	Vision      int32   `json:"vision"`
-	Damage      int32   `json:"damage"`
-	DamageType  uint8   `json:"damageType"`
-	ArmorPierce int32   `json:"armorPierce"`
-	ArmorCrush  int32   `json:"armorCrush"`
-	Range16     int32   `json:"range16"`
-	Rate        int32   `json:"rate"`
-	CostFood    int32   `json:"costFood"`
-	CostWood    int32   `json:"costWood"`
-	CostGold    int32   `json:"costGold"`
-	PopCost     int32   `json:"popCost"`
-	TrainBy     uint16  `json:"trainBy"`
-	TrainTicks  int32   `json:"trainTicks"`
-	CorpseFood  int32   `json:"corpseFood"`
-	Flee        bool    `json:"flee"`
-	MinEra      int32   `json:"minEra"`
-	Bonuses     []Bonus `json:"bonuses"`
+	ID          uint16 `json:"id"`
+	Key         string `json:"key"`
+	Class       uint8  `json:"class"`
+	HP          int32  `json:"hp"`
+	Speed16     int32  `json:"speed16"`
+	Vision      int32  `json:"vision"`
+	Damage      int32  `json:"damage"`
+	DamageType  uint8  `json:"damageType"`
+	ArmorPierce int32  `json:"armorPierce"`
+	ArmorCrush  int32  `json:"armorCrush"`
+	Range16     int32  `json:"range16"`
+	Rate        int32  `json:"rate"`
+	CostFood    int32  `json:"costFood"`
+	CostWood    int32  `json:"costWood"`
+	CostGold    int32  `json:"costGold"`
+	PopCost     int32  `json:"popCost"`
+	TrainBy     uint16 `json:"trainBy"`
+	TrainTicks  int32  `json:"trainTicks"`
+	CorpseFood  int32  `json:"corpseFood"`
+	Flee        bool   `json:"flee"`
+	// Wild AI fields (class 5 only; ignored by other classes).
+	FleeRadius int32  `json:"fleeRadius"` // panic radius in tiles (flee)
+	FleeClear  int32  `json:"fleeClear"`  // tiles at which flight calms
+	Sleep      string `json:"sleep"`      // ""|"day"|"night" activity window
+	Aggro      int32  `json:"aggro"`      // wild attacker charges within this radius
+	Leash      int32  `json:"leash"`      // roam this many tiles from spawn (0 = free)
+	// Habitat confines the animal to one terrain band; "forest" today.
+	Habitat string `json:"habitat"`
+	// CampfireImmune species ignore the campfire repulse aura.
+	CampfireImmune bool `json:"campfireImmune"`
+	// Prey lists neutral animal def ids a wild attacker hunts.
+	Prey    []uint16 `json:"prey"`
+	MinEra  int32    `json:"minEra"`
+	Bonuses []Bonus  `json:"bonuses"`
 }
 
 // Attacks reports whether this unit can deal damage at all.
@@ -163,6 +175,18 @@ func Parse(raw []byte) (*Table, error) {
 			return nil, fmt.Errorf("unit %s: trainable without a building", d.Key)
 		case d.CorpseFood < 0:
 			return nil, fmt.Errorf("unit %s: negative corpse food", d.Key)
+		case d.FleeRadius < 0 || d.FleeClear < 0 || d.Aggro < 0 || d.Leash < 0:
+			return nil, fmt.Errorf("unit %s: negative wild AI radius", d.Key)
+		case d.Flee && d.FleeRadius < 1:
+			return nil, fmt.Errorf("unit %s: flee needs a fleeRadius", d.Key)
+		case d.Flee && d.FleeClear < d.FleeRadius:
+			return nil, fmt.Errorf("unit %s: fleeClear must reach past fleeRadius", d.Key)
+		case d.Aggro > 0 && d.Damage == 0:
+			return nil, fmt.Errorf("unit %s: aggro without damage", d.Key)
+		case d.Sleep != "" && d.Sleep != "day" && d.Sleep != "night":
+			return nil, fmt.Errorf("unit %s: sleep must be day or night", d.Key)
+		case d.Habitat != "" && d.Habitat != "forest":
+			return nil, fmt.Errorf("unit %s: unknown habitat %q", d.Key, d.Habitat)
 		}
 		for _, b := range d.Bonuses {
 			if b.Class < ClassVillager || b.Class > ClassAnimal {
