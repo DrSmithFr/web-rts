@@ -1,210 +1,405 @@
 import * as THREE from 'three';
 
-import type { BuildingDef, BuildingRec } from '../sim/bridge';
+import { hash01 } from './hash';
+import { stepYaw, walkAmp, walkPhase } from './animate';
+import { unitModel, UNIT_DEFS, type AnimPart } from './models';
+import { PALETTE, RESOURCE_COLORS } from './palette';
+import { heightSampler } from './height';
 
-// RenderUnit is a display-ready unit: interpolated position, ground
-// height y, a vertical bob offset for the walking animation, the def for
-// body shape, a base color and an hp fraction used for damage tint.
+// Dynamic units as instanced rigid-part models: a merged body, one
+// player-tinted insignia mesh and up to five animated parts (legs, arm,
+// weapon, carry), each pivoting with one matrix multiply per frame.
+// Facing, walk cycle and attack cycles are derived from the interpolated
+// positions the main loop already computes; no allocation per instance.
+
 export interface RenderUnit {
   id: number;
   owner: number;
   x: number;
   y: number;
-  yOff: number;
   carried: number;
+  carriedKind: number;
   def: number;
   cls: number;
+  state: number;
+  target: number;
   color: number;
   hpFrac: number;
 }
-import { MOUNT_COLOR, PALETTE } from './palette';
-import { heightSampler } from './height';
 
-// Dynamic entities: humanoids as owner-colored instanced capsules, with
-// spear tips for lancers and mounts for scouts, animals as low boxes,
-// buildings as owner-colored boxes (sites grow with progress), plus
-// selection rings.
+export interface TargetResolver {
+  (id: number): { x: number; y: number } | null;
+}
 
-const UNIT_CAP = 512;
-const EXTRA_CAP = 128;
-const BUILDING_CAP = 256;
+const UNIT_CAP = 1200;
+const BAR_CAP = 300;
+const RING_CAP = 96;
 
-// Unit class ids mirrored from sim/units.
-const CLASS_SCOUT = 4;
-const CLASS_ANIMAL = 5;
-const DEF_LANCER = 2;
+// sim unit state bytes (mirrored from sim/core/entities.go)
+export const STATE_GATHER = 2;
+export const STATE_BUILD = 4;
+export const STATE_ATTACK = 5;
+export const STATE_SLEEP = 9;
+
+interface Rig {
+  body: THREE.InstancedMesh;
+  insignia: THREE.InstancedMesh | null;
+  anim: { part: AnimPart; mesh: THREE.InstancedMesh }[];
+}
+
+interface AnimState {
+  yaw: number;
+  walk: number;
+  amp: number;
+  cyc: number;
+  state: number;
+  x: number;
+  y: number;
+}
 
 export interface Actors {
   group: THREE.Group;
-  setUnits(units: RenderUnit[]): void;
-  setBuildings(buildings: BuildingRec[], defs: Map<number, BuildingDef>): void;
+  setUnits(units: RenderUnit[], now: number, resolve: TargetResolver): void;
   setSelection(ids: number[]): void;
-  // screenPoint fills v with the projected position of entity id; false if gone.
   entityPosition(id: number, out: THREE.Vector3): boolean;
 }
 
-export function buildActors(size: number, heights: Uint16Array): Actors {
+export function buildActors(size: number, heights: Uint16Array, camera: THREE.Camera): Actors {
   const group = new THREE.Group();
   const heightAt = heightSampler(size, heights);
 
-  const bodyGeo = new THREE.CapsuleGeometry(0.16, 0.34, 2, 6);
-  bodyGeo.translate(0, 0.33, 0);
-  const bodyMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
-  const unitMesh = new THREE.InstancedMesh(bodyGeo, bodyMat, UNIT_CAP);
-  unitMesh.castShadow = true;
-  unitMesh.count = 0;
-  // Instance matrices move every frame and three caches the bounding sphere
-  // on first use; culling would keep the mesh invisible forever.
-  unitMesh.frustumCulled = false;
-  group.add(unitMesh);
+  const lambert = () =>
+    new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true, vertexColors: true });
 
-  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-  boxGeo.translate(0.5, 0, 0.5);
-  const buildMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
-  const buildMesh = new THREE.InstancedMesh(boxGeo, buildMat, BUILDING_CAP);
-  buildMesh.castShadow = true;
-  buildMesh.count = 0;
-  buildMesh.frustumCulled = false;
-  group.add(buildMesh);
+  const rigs = new Map<number, Rig>();
+  for (const def of UNIT_DEFS) {
+    const model = unitModel(def);
+    const body = new THREE.InstancedMesh(model.body, lambert(), UNIT_CAP);
+    body.castShadow = true;
+    body.frustumCulled = false;
+    body.count = 0;
+    group.add(body);
+    let insignia: THREE.InstancedMesh | null = null;
+    if (model.insignia) {
+      insignia = new THREE.InstancedMesh(model.insignia, lambert(), UNIT_CAP);
+      insignia.castShadow = true;
+      insignia.frustumCulled = false;
+      insignia.count = 0;
+      group.add(insignia);
+    }
+    const anim: { part: AnimPart; mesh: THREE.InstancedMesh }[] = [];
+    for (const part of model.anim) {
+      const mesh = new THREE.InstancedMesh(part.geo, lambert(), UNIT_CAP);
+      mesh.castShadow = true;
+      mesh.frustumCulled = false;
+      mesh.count = 0;
+      group.add(mesh);
+      anim.push({ part, mesh });
+    }
+    rigs.set(def, { body, insignia, anim });
+  }
 
-  const ringGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.05, 16);
+  // contact shadows: dark ground blobs under every unit so they read at
+  // any zoom, before silhouettes are only a few pixels tall
+  const blobGeo = new THREE.CircleGeometry(0.36, 14);
+  blobGeo.rotateX(-Math.PI / 2);
+  const blobMat = new THREE.MeshBasicMaterial({
+    color: 0x141d10,
+    transparent: true,
+    opacity: 0.38,
+    depthWrite: false,
+  });
+  const blobs = new THREE.InstancedMesh(blobGeo, blobMat, UNIT_CAP);
+  blobs.frustumCulled = false;
+  blobs.count = 0;
+  group.add(blobs);
+
+  // selection rings: flat torus with a shared pulse
+  const ringGeo = new THREE.TorusGeometry(0.38, 0.045, 6, 28);
+  ringGeo.rotateX(-Math.PI / 2);
   const ringMat = new THREE.MeshBasicMaterial({
     color: PALETTE.select,
     transparent: true,
-    opacity: 0.55,
+    opacity: 0.6,
   });
-  const rings = new THREE.InstancedMesh(ringGeo, ringMat, 64);
+  const rings = new THREE.InstancedMesh(ringGeo, ringMat, RING_CAP);
   rings.visible = false;
   rings.frustumCulled = false;
   group.add(rings);
 
-  const spearGeo = new THREE.ConeGeometry(0.05, 0.55, 5);
-  spearGeo.translate(0, 0.62, 0.12);
-  const spearMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
-  const spearMesh = new THREE.InstancedMesh(spearGeo, spearMat, EXTRA_CAP);
-  spearMesh.count = 0;
-  spearMesh.frustumCulled = false;
-  group.add(spearMesh);
-
-  const beastGeo = new THREE.BoxGeometry(0.34, 0.3, 0.62);
-  beastGeo.translate(0, 0.18, 0);
-  const beastMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
-  const beastMesh = new THREE.InstancedMesh(beastGeo, beastMat, EXTRA_CAP);
-  beastMesh.count = 0;
-  beastMesh.frustumCulled = false;
-  group.add(beastMesh);
+  // hp bars over damaged units, billboarded to the camera
+  const barBackGeo = new THREE.BoxGeometry(1, 0.075, 0.01);
+  const barBack = new THREE.InstancedMesh(barBackGeo, new THREE.MeshBasicMaterial({ color: 0x11151f }), BAR_CAP);
+  barBack.frustumCulled = false;
+  barBack.count = 0;
+  group.add(barBack);
+  const barFillGeo = new THREE.BoxGeometry(1, 0.05, 0.014);
+  const barFill = new THREE.InstancedMesh(barFillGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }), BAR_CAP);
+  barFill.frustumCulled = false;
+  barFill.count = 0;
+  group.add(barFill);
 
   const matrix = new THREE.Matrix4();
+  const partM = new THREE.Matrix4();
+  const pivotM = new THREE.Matrix4();
+  const spinM = new THREE.Matrix4();
+  const baseM = new THREE.Matrix4();
   const quat = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  const color = new THREE.Color();
+  const IDENTITY_Q = new THREE.Quaternion();
+  const scaleV = new THREE.Vector3();
+  const posV = new THREE.Vector3();
+  const YAXIS = new THREE.Vector3(0, 1, 0);
+  const XAXIS = new THREE.Vector3(1, 0, 0);
+  const scratchColor = new THREE.Color();
+  const GREEN = new THREE.Color(0x7bd86a);
+  const RED = new THREE.Color(0xd86a6a);
 
+  const animById = new Map<number, AnimState>();
   const unitPos = new Map<number, THREE.Vector3>();
-  const buildPos = new Map<number, THREE.Vector3>();
 
-  const tinted = (hex: number, hpFrac: number): THREE.Color =>
-    color.clone().setHex(hex).multiplyScalar(0.45 + 0.55 * Math.min(1, Math.max(0, hpFrac)));
+  let lastNow = 0;
+
+  function tint(hex: number, hpFrac: number): THREE.Color {
+    scratchColor.setHex(hex);
+    scratchColor.multiplyScalar(0.5 + 0.5 * Math.min(1, Math.max(0, hpFrac)));
+    return scratchColor;
+  }
 
   return {
     group,
-    setUnits(units: RenderUnit[]): void {
+    setUnits(units: RenderUnit[], now: number, resolve: TargetResolver): void {
+      const dt = lastNow === 0 ? 0.016 : Math.min(0.1, (now - lastNow) / 1000);
+      lastNow = now;
+
+      const counts = new Map<number, number>();
       unitPos.clear();
-      let n = 0;
-      let ns = 0;
-      let nb = 0;
+      let barN = 0;
+      let blobN = 0;
+      const camQuat = camera.quaternion;
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camQuat);
+
       for (const u of units) {
-        if (n >= UNIT_CAP) break;
-        const p = new THREE.Vector3(u.x, heightAt(u.x, u.y) + u.yOff, u.y);
-        unitPos.set(u.id, p);
-        if (u.cls === CLASS_ANIMAL) {
-          if (nb < EXTRA_CAP) {
-            matrix.compose(p, quat, scale.set(1, 1, 1));
-            beastMesh.setMatrixAt(nb, matrix);
-            beastMesh.setColorAt(nb, tinted(u.color, u.hpFrac));
-            nb++;
+        const rig = rigs.get(u.def);
+        if (!rig) continue;
+        const idx = counts.get(u.def) ?? 0;
+        if (idx >= UNIT_CAP) continue;
+        counts.set(u.def, idx + 1);
+
+        let st = animById.get(u.id);
+        if (!st) {
+          st = { yaw: 0, walk: 0, amp: 0, cyc: 0, state: u.state, x: u.x, y: u.y };
+          animById.set(u.id, st);
+        }
+        const busyState = u.state === STATE_ATTACK || u.state === STATE_GATHER || u.state === STATE_BUILD;
+        if (u.state !== st.state) {
+          st.cyc = busyState ? 0.001 : 0;
+          st.state = u.state;
+        } else if (busyState) {
+          st.cyc += dt;
+        } else {
+          st.cyc = 0;
+        }
+
+        const dx = u.x - st.x;
+        const dy = u.y - st.y;
+        const moved = Math.sqrt(dx * dx + dy * dy);
+        const speed = moved / Math.max(dt, 0.004);
+        st.x = u.x;
+        st.y = u.y;
+
+        const moving = moved > 0.0015;
+        st.amp = walkAmp(st.amp, moving ? speed : 0, dt);
+        st.walk = walkPhase(st.walk, moved);
+
+        const heading = moving ? Math.atan2(dx, dy) : facingTarget(u, resolve);
+        st.yaw = stepYaw(st.yaw, heading, dt);
+
+        const jitter = 0.94 + 0.12 * hash01(u.id, u.owner, 31);
+        const bob = Math.abs(Math.sin(st.walk * 2)) * 0.05 * st.amp;
+        const py = heightAt(u.x, u.y);
+        posV.set(u.x, py + bob, u.y);
+        // grow distant units (and their blobs/rings) so actors keep a
+        // readable footprint when the camera pulls away
+        const camD = camera.position.distanceTo(posV);
+        const far = THREE.MathUtils.clamp((camD - 26) / 84, 0, 1);
+        const unitScale = jitter * (1 + 0.65 * far);
+        // sleeping animals settle onto the ground: the flattened base
+        // pose carries through to the leg parts
+        const flat = u.state === STATE_SLEEP ? 0.42 : 1;
+        quat.setFromAxisAngle(YAXIS, st.yaw);
+        scaleV.set(unitScale, unitScale * flat, unitScale);
+        baseM.compose(posV, quat, scaleV);
+
+        unitPos.set(u.id, new THREE.Vector3(u.x, py, u.y));
+
+        matrix.compose(
+          new THREE.Vector3(u.x, py + 0.02, u.y),
+          IDENTITY_Q,
+          scaleV.set(unitScale * 1.15, 1, unitScale * 1.15),
+        );
+        blobs.setMatrixAt(blobN, matrix);
+        blobN++;
+
+        rig.body.setMatrixAt(idx, baseM);
+        rig.body.setColorAt(idx, tint(0xffffff, u.hpFrac));
+        if (rig.insignia) {
+          rig.insignia.setMatrixAt(idx, baseM);
+          rig.insignia.setColorAt(idx, tint(u.color, u.hpFrac));
+        }
+
+        for (const entry of rig.anim) {
+          const role = entry.part.role;
+          const pivot = entry.part.pivot;
+          let tx = pivot.x;
+          let ty = pivot.y;
+          let tz = pivot.z;
+          let angle = 0;
+          let colorHex = 0xffffff;
+          let scale = 1;
+
+          if (role === 'weapon') {
+            if (st.cyc > 0) {
+              const s = Math.max(0, Math.sin(st.cyc * 7.5));
+              switch (u.def) {
+                case 2:
+                case 4:
+                  tz += 0.16 * s;
+                  break;
+                case 7:
+                  angle = -0.5 - 1.6 * s;
+                  break;
+                case 3:
+                case 8:
+                  tz -= 0.1 * Math.max(0, Math.sin(st.cyc * 9));
+                  break;
+                default:
+                  angle = -0.35 - 0.85 * s;
+              }
+            } else if (u.cls === 1) {
+              angle = -0.9;
+            } else if (u.cls === 5) {
+              scale = 0.0001;
+            }
+            colorHex = u.cls === 1 ? 0xffffff : PALETTE.steel;
+          } else if (role === 'carry') {
+            if (u.carried <= 0) {
+              scale = 0.0001;
+            } else {
+              colorHex = RESOURCE_COLORS[u.carriedKind] ?? PALETTE.stone;
+            }
+          } else if (role === 'armR') {
+            if (u.state === STATE_GATHER || u.state === STATE_BUILD) {
+              angle = st.cyc > 0 ? -0.5 - Math.abs(Math.sin(st.cyc * 6)) * 1.1 : 0;
+            } else {
+              angle = Math.sin(st.walk + Math.PI) * st.amp * 1.2;
+            }
+          } else {
+            const front = role === 'legF' || role === 'legL';
+            angle = Math.sin(st.walk + (front ? 0 : Math.PI)) * st.amp;
           }
-          continue;
+
+          pivotM.makeTranslation(tx, ty, tz);
+          spinM.makeRotationAxis(XAXIS, angle);
+          partM.copy(pivotM).multiply(spinM);
+          matrix.copy(baseM).multiply(partM);
+          if (scale !== 1) {
+            matrix.multiply(spinM.makeScale(scale, scale, scale));
+          }
+          entry.mesh.setMatrixAt(idx, matrix);
+          entry.mesh.setColorAt(idx, tint(colorHex, u.hpFrac));
         }
-        const s = u.carried > 0 ? 1.15 : u.cls === CLASS_SCOUT ? 1.12 : 1;
-        matrix.compose(p, quat, scale.set(s, s, s));
-        unitMesh.setMatrixAt(n, matrix);
-        unitMesh.setColorAt(n, tinted(u.color, u.hpFrac));
-        n++;
-        if (u.cls === CLASS_SCOUT && nb < EXTRA_CAP) {
-          const mp = new THREE.Vector3(u.x, heightAt(u.x, u.y) + u.yOff * 0.5, u.y);
-          matrix.compose(mp, quat, scale.set(1.35, 0.75, 1.6));
-          beastMesh.setMatrixAt(nb, matrix);
-          beastMesh.setColorAt(nb, tinted(MOUNT_COLOR, u.hpFrac));
-          nb++;
-        }
-        if (u.def === DEF_LANCER && ns < EXTRA_CAP) {
-          matrix.compose(p, quat, scale.set(1, 1, 1));
-          spearMesh.setMatrixAt(ns, matrix);
-          spearMesh.setColorAt(ns, color.clone().setHex(0xc9c9c9));
-          ns++;
+
+        if (u.hpFrac < 0.98 && barN < BAR_CAP) {
+          const w = 0.46 * unitScale;
+          const byy = py + 0.92 * unitScale;
+          matrix.compose(
+            new THREE.Vector3(u.x - (right.x * w) / 2, byy, u.y - (right.z * w) / 2),
+            camQuat,
+            new THREE.Vector3(w, 1, 1),
+          );
+          barBack.setMatrixAt(barN, matrix);
+          const fw = w * u.hpFrac;
+          matrix.compose(
+            new THREE.Vector3(
+              u.x - (right.x * (w - fw)) / 2,
+              byy,
+              u.y - (right.z * (w - fw)) / 2,
+            ),
+            camQuat,
+            new THREE.Vector3(fw, 1, 1),
+          );
+          barFill.setMatrixAt(barN, matrix);
+          scratchColor.copy(GREEN);
+          scratchColor.lerp(RED, 1 - u.hpFrac);
+          barFill.setColorAt(barN, scratchColor);
+          barN++;
         }
       }
-      unitMesh.count = n;
-      spearMesh.count = ns;
-      beastMesh.count = nb;
-      unitMesh.instanceMatrix.needsUpdate = true;
-      if (unitMesh.instanceColor) unitMesh.instanceColor.needsUpdate = true;
-      spearMesh.instanceMatrix.needsUpdate = true;
-      if (spearMesh.instanceColor) spearMesh.instanceColor.needsUpdate = true;
-      beastMesh.instanceMatrix.needsUpdate = true;
-      if (beastMesh.instanceColor) beastMesh.instanceColor.needsUpdate = true;
-    },
-    setBuildings(buildings: BuildingRec[], defs: Map<number, BuildingDef>): void {
-      buildPos.clear();
-      const n = Math.min(buildings.length, BUILDING_CAP);
-      for (let i = 0; i < n; i++) {
-        const b = buildings[i];
-        const def = defs.get(b.def);
-        const sizeTiles = def ? def.size : 1;
-        const done = def && def.buildTicks > 0 ? 1 - b.progress / def.buildTicks : 1;
-        const h = 0.35 + 0.9 * done;
-        const p = new THREE.Vector3(b.tileX, heightAt(b.tileX, b.tileY) + 0.02, b.tileY);
-        buildPos.set(b.id, p);
-        matrix.compose(p, quat, scale.set(sizeTiles, h, sizeTiles));
-        buildMesh.setMatrixAt(i, matrix);
-        const base =
-          def && def.key === 'campfire'
-            ? PALETTE.campfire
-            : def && def.key === 'storehouse'
-              ? PALETTE.storehouse
-              : PALETTE.hut;
-        color.setHex(base).multiplyScalar(0.6 + 0.4 * done);
-        buildMesh.setColorAt(i, color);
+
+      for (const [def, rig] of rigs) {
+        const n = counts.get(def) ?? 0;
+        rig.body.count = n;
+        rig.body.instanceMatrix.needsUpdate = true;
+        if (rig.body.instanceColor) rig.body.instanceColor.needsUpdate = true;
+        if (rig.insignia) {
+          rig.insignia.count = n;
+          rig.insignia.instanceMatrix.needsUpdate = true;
+          if (rig.insignia.instanceColor) rig.insignia.instanceColor.needsUpdate = true;
+        }
+        for (const entry of rig.anim) {
+          entry.mesh.count = n;
+          entry.mesh.instanceMatrix.needsUpdate = true;
+          if (entry.mesh.instanceColor) entry.mesh.instanceColor.needsUpdate = true;
+        }
       }
-      buildMesh.count = n;
-      buildMesh.instanceMatrix.needsUpdate = true;
-      if (buildMesh.instanceColor) buildMesh.instanceColor.needsUpdate = true;
+
+      barBack.count = barN;
+      barBack.instanceMatrix.needsUpdate = true;
+      barFill.count = barN;
+      barFill.instanceMatrix.needsUpdate = true;
+      if (barFill.instanceColor) barFill.instanceColor.needsUpdate = true;
+      blobs.count = blobN;
+      blobs.instanceMatrix.needsUpdate = true;
+
+      if (animById.size > units.length * 2 + 256) {
+        const seen = new Set(units.map((u) => u.id));
+        for (const id of animById.keys()) if (!seen.has(id)) animById.delete(id);
+      }
     },
     setSelection(ids: number[]): void {
-      const shown = ids.slice(0, 64);
-      shown.forEach((id, i) => {
-        const isUnit = unitPos.has(id);
-        const p = isUnit ? unitPos.get(id)! : buildPos.get(id)!;
-        if (!p) return;
-        const r = isUnit ? 1 : 1.6;
-        const cx = isUnit ? p.x : p.x + 0.5;
-        const cz = isUnit ? p.z : p.z + 0.5;
-        matrix.compose(
-          new THREE.Vector3(cx, p.y + 0.05, cz),
-          quat,
-          scale.set(r, 1, r),
-        );
-        rings.setMatrixAt(i, matrix);
-      });
-      rings.count = shown.length;
-      rings.visible = shown.length > 0;
+      const pulse = 0.45 + 0.25 * (0.5 + 0.5 * Math.sin(performance.now() * 0.006));
+      ringMat.opacity = pulse;
+      const shown = ids.slice(0, RING_CAP);
+      let n = 0;
+      for (const id of shown) {
+        const p = unitPos.get(id);
+        if (!p) continue;
+        const camD = camera.position.distanceTo(p);
+        const far = THREE.MathUtils.clamp((camD - 26) / 84, 0, 1);
+        const s = 1 + 0.55 * far;
+        matrix.compose(new THREE.Vector3(p.x, p.y + 0.03, p.z), IDENTITY_Q, scaleV.set(s, 1, s));
+        rings.setMatrixAt(n, matrix);
+        n++;
+      }
+      rings.count = n;
+      rings.visible = n > 0;
       rings.instanceMatrix.needsUpdate = true;
     },
     entityPosition(id: number, out: THREE.Vector3): boolean {
-      const p = unitPos.get(id) ?? buildPos.get(id);
+      const p = unitPos.get(id);
       if (!p) return false;
       out.copy(p);
       return true;
     },
   };
+}
+
+// facingTarget returns a yaw towards an attack/gather/build target, or
+// NaN to keep the current heading.
+function facingTarget(u: RenderUnit, resolve: TargetResolver): number {
+  if (u.target === 0) return NaN;
+  if (u.state !== STATE_ATTACK && u.state !== STATE_GATHER && u.state !== STATE_BUILD) return NaN;
+  const t = resolve(u.target);
+  if (!t) return NaN;
+  return Math.atan2(t.x - u.x, t.y - u.y);
 }

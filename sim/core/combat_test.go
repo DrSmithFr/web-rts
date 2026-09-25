@@ -64,7 +64,7 @@ func TestAttackOrderKillsAndUpdatesPop(t *testing.T) {
 	}
 	popBefore := w.players[1].Pop
 	w.Step([]proto.Order{{Player: 0, Kind: orders.Attack,
-		Payload: orders.AttackPayload([]uint32{uint32(killer)}, uint32(victim))}})
+		Payload: orders.AttackPayload([]uint32{uint32(killer)}, uint32(victim), orders.TargetUnit)}})
 	for i := 0; i < 20*60 && w.units.Alive(victim); i++ {
 		w.Step(nil)
 	}
@@ -85,7 +85,7 @@ func TestBoarRetaliates(t *testing.T) {
 	attacker := spawnUnitAt(t, w, 0, DefLancer, 10, 10)
 	boar := spawnUnitAt(t, w, OwnerNeutral, DefBoar, 11, 10)
 	w.Step([]proto.Order{{Player: 0, Kind: orders.Attack,
-		Payload: orders.AttackPayload([]uint32{uint32(attacker)}, uint32(boar))}})
+		Payload: orders.AttackPayload([]uint32{uint32(attacker)}, uint32(boar), orders.TargetUnit)}})
 	w.Step(nil)
 	b := w.units.Get(boar)
 	if b != nil && b.State == UnitAttack && b.AttackTarget == attacker {
@@ -129,7 +129,7 @@ func TestHuntLeavesGatherableCorpse(t *testing.T) {
 	villager := spawnUnitAt(t, w, 0, DefVillager, 20, 20)
 	boar := spawnUnitAt(t, w, OwnerNeutral, DefDeer, 22, 20)
 	w.Step([]proto.Order{{Player: 0, Kind: orders.Attack,
-		Payload: orders.AttackPayload([]uint32{uint32(villager)}, uint32(boar))}})
+		Payload: orders.AttackPayload([]uint32{uint32(villager)}, uint32(boar), orders.TargetUnit)}})
 	for i := 0; i < 20*300 && w.units.Alive(boar); i++ {
 		w.Step(nil)
 	}
@@ -211,7 +211,7 @@ func TestCombatDeterminism(t *testing.T) {
 		}
 		w.Step([]proto.Order{
 			{Player: 0, Kind: orders.Attack,
-				Payload: orders.AttackPayload(lancers, archers[0])},
+				Payload: orders.AttackPayload(lancers, archers[0], orders.TargetUnit)},
 		})
 		for i := 0; i < 20*90; i++ {
 			w.Step(nil)
@@ -220,5 +220,95 @@ func TestCombatDeterminism(t *testing.T) {
 	}
 	if h1, h2 := run(), run(); h1 != h2 {
 		t.Fatalf("combat nondeterministic: %x vs %x", h1, h2)
+	}
+}
+
+// TestAttackEnemyBuilding pins that attack orders work on buildings:
+// the lancer walks to the enemy hut, damages it and razes it.
+func TestAttackEnemyBuilding(t *testing.T) {
+	w := flatWorld(1)
+	_, b := w.buildings.Create()
+	b.DefID, b.Owner, b.TileX, b.TileY, b.Size, b.HP = BldHut, 1, 20, 20, 1, BuildingHP
+	b.Progress = 0
+	lancer := spawnUnitAt(t, w, 0, DefLancer, 10, 20)
+	var bid entity.ID
+	w.buildings.Each(func(id entity.ID, e *Building) {
+		if e.Owner == 1 {
+			bid = id
+		}
+	})
+	w.Step([]proto.Order{{Player: 0, Kind: orders.Attack,
+		Payload: orders.AttackPayload([]uint32{uint32(lancer)}, uint32(bid), orders.TargetBuilding)}})
+	l0 := w.units.Get(lancer)
+	t.Logf("lancer st=%d atk=%d bid=%d", l0.State, l0.AttackTarget, bid)
+	hit := false
+	for i := 0; i < 4000; i++ {
+		w.Step(nil)
+		if eb := w.buildings.Get(bid); eb != nil {
+			if eb.HP < BuildingHP {
+				hit = true
+			}
+		} else {
+			break
+		}
+	}
+	l1 := w.units.Get(lancer)
+	t.Logf("after: lancer st=%d atk=%d pos=(%d,%d)", l1.State, l1.AttackTarget, tileOf(l1.X), tileOf(l1.Y))
+	w.buildings.Each(func(id entity.ID, e *Building) {
+		t.Logf("bld id=%d def=%d owner=%d hp=%d tile=(%d,%d)", id, e.DefID, e.Owner, e.HP, e.TileX, e.TileY)
+	})
+	if !hit {
+		t.Fatal("building never took damage")
+	}
+	if w.buildings.Get(bid) != nil {
+		t.Fatal("building never razed")
+	}
+	if got := w.units.Get(lancer); got == nil || got.State != UnitIdle {
+		t.Fatal("attacker not idled after razing")
+	}
+}
+
+// TestRepairResumesConstruction pins bug 2: a stopped builder can be
+// sent back with a Repair order and the construction finishes.
+func TestRepairResumesConstruction(t *testing.T) {
+	w := grassWorld(t, nil)
+	u := firstUnit(w, 0)
+	w.players[0].Res[resource.Wood] += 500
+	w.Step([]proto.Order{{Player: 0, Kind: orders.Build,
+		Payload: orders.BuildPayload(uint32(u), BldHut, 12, 5)}})
+	var bid entity.ID
+	w.buildings.Each(func(id entity.ID, b *Building) {
+		if b.DefID == BldHut && b.Owner == 0 {
+			bid = id
+		}
+	})
+	if bid == entity.Nil {
+		t.Fatal("no hut placed")
+	}
+	for i := 0; i < 60; i++ {
+		w.Step(nil)
+	}
+	w.Step([]proto.Order{{Player: 0, Kind: orders.Stop,
+		Payload: orders.StopPayload([]uint32{uint32(u)})}})
+	for i := 0; i < 5; i++ {
+		w.Step(nil)
+	}
+	frozen := w.buildings.Get(bid).Progress
+	if frozen <= 0 {
+		t.Fatal("nothing left to repair")
+	}
+	for i := 0; i < 100; i++ {
+		w.Step(nil)
+	}
+	if w.buildings.Get(bid).Progress != frozen {
+		t.Fatal("progress moved while interrupted")
+	}
+	w.Step([]proto.Order{{Player: 0, Kind: orders.Repair,
+		Payload: orders.RepairPayload([]uint32{uint32(u)}, uint32(bid))}})
+	for i := 0; i < 5000 && w.buildings.Get(bid).Progress > 0; i++ {
+		w.Step(nil)
+	}
+	if b := w.buildings.Get(bid); b == nil || b.Progress != 0 {
+		t.Fatal("repair never finished the construction")
 	}
 }

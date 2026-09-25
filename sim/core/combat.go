@@ -1,6 +1,7 @@
 package core
 
 import (
+	"rts/sim/building"
 	"rts/sim/entity"
 	"rts/sim/fixed"
 	"rts/sim/fog"
@@ -22,12 +23,21 @@ func (w *World) applyAttack(player uint8, p []byte) bool {
 		ids = append(ids, entity.ID(r.Uvarint()))
 	}
 	target := entity.ID(r.Uvarint())
-	if !r.OK() {
+	kind := uint8(r.Uvarint())
+	if !r.OK() || (kind != orders.TargetUnit && kind != orders.TargetBuilding) {
 		return false
 	}
-	t := w.units.Get(target)
-	if t == nil || t.Owner == player {
-		return true // well-formed order at a stale target: no-op
+	switch kind {
+	case orders.TargetBuilding:
+		b := w.buildings.Get(target)
+		if b == nil || b.Owner >= MaxPlayers || b.Owner == player || b.HP <= 0 {
+			return true // stale or own target: no-op
+		}
+	default:
+		t := w.units.Get(target)
+		if t == nil || t.Owner == player || t.HP <= 0 || w.zombieGhosted(t) {
+			return true // stale target, or a ghost no one can see
+		}
 	}
 	for _, id := range ids {
 		u := w.units.Get(id)
@@ -39,6 +49,7 @@ func (w *World) applyAttack(player uint8, p []byte) bool {
 		}
 		u.State = UnitAttack
 		u.AttackTarget = target
+		u.AttackKind = kind
 	}
 	return true
 }
@@ -89,54 +100,6 @@ func (w *World) patrolStep(u *Unit) {
 		return
 	}
 	stepToward(&u.X, &u.Y, u.TX, u.TY, w.speedOf(u))
-}
-
-// wanderStep is the idle animal loop: panic into flight when a threat
-// gets close, otherwise retarget a few tiles away every so often.
-func (w *World) wanderStep(id entity.ID, u *Unit) {
-	def := w.udefs.Get(u.DefID)
-	if def != nil && def.Flee {
-		if t := w.nearestThreat(u, FleeRadius); t != nil {
-			u.State = UnitFlee
-			return
-		}
-	}
-	if u.TX == 0 && u.TY == 0 {
-		u.TX, u.TY = u.X, u.Y // fresh spawn: no destination yet
-	}
-	if (uint32(id)+uint32(w.tick)*7)%40 == 0 {
-		h := mix64(uint64(w.seed) ^ uint64(id)*0x9e3779b97f4a7c15 ^ uint64(w.tick)*0xff51afd7ed558ccd)
-		tx := tileOf(u.X) + int32(h%7) - 3
-		ty := tileOf(u.Y) + int32((h>>3)%7) - 3
-		if w.tileWalkable(tx, ty) {
-			u.TX, u.TY = tileCenter(tx), tileCenter(ty)
-		}
-	}
-	if near(u.X, u.Y, u.TX, u.TY, 2048) {
-		return
-	}
-	stepToward(&u.X, &u.Y, u.TX, u.TY, w.speedOf(u))
-}
-
-// fleeStep runs away from the closest threat until it is far enough away.
-func (w *World) fleeStep(u *Unit) {
-	t := w.nearestThreat(u, FleeClearRadius)
-	if t == nil {
-		u.State = UnitWander
-		return
-	}
-	// Mirror point behind the unit; fall back to axis-away, then stand.
-	ax, ay := u.X.Add(u.X.Sub(t.X)), u.Y.Add(u.Y.Sub(t.Y))
-	if !w.tileWalkable(tileOf(ax), tileOf(ay)) {
-		if w.tileWalkable(tileOf(ax), tileOf(u.Y)) {
-			ay = u.Y
-		} else if w.tileWalkable(tileOf(u.X), tileOf(ay)) {
-			ax = u.X
-		} else {
-			return
-		}
-	}
-	stepToward(&u.X, &u.Y, ax, ay, w.speedOf(u))
 }
 
 // nearestThreat returns the closest hostile player unit within radius
@@ -196,13 +159,35 @@ func (w *World) attackDamage(att *units.Def, attOwner uint8, target *Unit) int32
 func (w *World) combatPhase() {
 	w.cooldownTick()
 	var dead []entity.ID
-	markDead := func(id entity.ID) {
+	type kill struct {
+		killer entity.ID
+		victim entity.ID
+		human  bool
+		x, y   fixed.F16
+	}
+	var kills []kill
+	markDead := func(attacker, victim entity.ID) {
 		for _, d := range dead {
-			if d == id {
+			if d == victim {
 				return
 			}
 		}
-		dead = append(dead, id)
+		dead = append(dead, victim)
+		if u := w.units.Get(victim); u != nil {
+			vdef := w.udefs.Get(u.DefID)
+			// the walking dead raise the helpless — unarmed villagers —
+			// not armored soldiers, so a battlefield of troops does not
+			// snowball into an unkillable horde
+			human := u.Owner < MaxPlayers && u.DefID != DefZombie &&
+				vdef != nil && !vdef.Military()
+			kills = append(kills, kill{
+				killer: attacker,
+				victim: victim,
+				human:  human,
+				x:      u.X,
+				y:      u.Y,
+			})
+		}
 	}
 
 	w.units.Each(func(id entity.ID, u *Unit) {
@@ -210,10 +195,25 @@ func (w *World) combatPhase() {
 			return
 		}
 		def := w.udefs.Get(u.DefID)
-		t := w.units.Get(u.AttackTarget)
-		if t == nil || t.Owner == u.Owner || t.HP <= 0 || def == nil || !def.Attacks() {
+		if def == nil || !def.Attacks() {
 			u.State = UnitIdle
 			u.AttackTarget = entity.Nil
+			u.AttackKind = 0
+			return
+		}
+		if u.AttackKind == orders.TargetBuilding {
+			if !w.attackBuilding(id, u, def) {
+				u.State = UnitIdle
+				u.AttackTarget = entity.Nil
+				u.AttackKind = 0
+			}
+			return
+		}
+		t := w.units.Get(u.AttackTarget)
+		if t == nil || t.HP <= 0 || (t.Owner == u.Owner && u.Owner != OwnerNeutral) {
+			u.State = UnitIdle
+			u.AttackTarget = entity.Nil
+			u.AttackKind = 0
 			return
 		}
 		reach := fixed.F16(def.Range16)
@@ -226,8 +226,11 @@ func (w *World) combatPhase() {
 			}
 			t.HP -= w.attackDamage(def, u.Owner, t)
 			u.Cooldown = def.Rate
+			if t.State == UnitSleep {
+				t.State = UnitWander // a struck animal rouses at once
+			}
 			if t.HP <= 0 {
-				markDead(u.AttackTarget)
+				markDead(id, u.AttackTarget)
 				return
 			}
 			// retaliation: defenders that can fight back and are not
@@ -235,7 +238,12 @@ func (w *World) combatPhase() {
 			if td := w.udefs.Get(t.DefID); td != nil && td.Attacks() && t.State != UnitAttack {
 				t.State = UnitAttack
 				t.AttackTarget = id
+				t.AttackKind = orders.TargetUnit
 			}
+			return
+		}
+		if u.Owner == OwnerNeutral {
+			w.wildChase(u, def, t) // animals step straight, no flow field
 			return
 		}
 		if !w.followField(u, tileOf(t.X), tileOf(t.Y)) {
@@ -256,7 +264,15 @@ func (w *World) combatPhase() {
 		limit := int64(def.Vision) << 16
 		limit *= limit
 		w.units.Each(func(id entity.ID, o *Unit) {
-			if o.HP <= 0 || o.Owner == u.Owner || o.Owner >= MaxPlayers {
+			if o.HP <= 0 || o.Owner == u.Owner {
+				return
+			}
+			// wild animals stay wild to idle eyes, but night-walking
+			// zombies are hostile to every garrison
+			if o.Owner >= MaxPlayers && !isZombie(o) {
+				return
+			}
+			if w.zombieGhosted(o) {
 				return
 			}
 			if fg.State(int(tileOf(o.X)), int(tileOf(o.Y))) != fog.Visible {
@@ -273,10 +289,70 @@ func (w *World) combatPhase() {
 		if best != entity.Nil {
 			u.State = UnitAttack
 			u.AttackTarget = best
+			u.AttackKind = orders.TargetUnit
 		}
 	})
 
+	w.towerPhase(markDead)
 	w.processDeaths(dead)
+
+	// infection: every human a zombie kills rises again bound to the
+	// same relic — the horde is made of its victims.
+	for _, k := range kills {
+		if !k.human {
+			continue
+		}
+		killer := w.units.Get(k.killer)
+		if killer == nil || killer.HP <= 0 {
+			continue
+		}
+		kdef := w.udefs.Get(killer.DefID)
+		if kdef == nil || !kdef.Infect {
+			continue
+		}
+		w.spawnZombie(killer.Relic, tileCenter(tileOf(k.x)), tileCenter(tileOf(k.y)))
+	}
+}
+
+// attackBuilding drives one attacker assigned to an enemy building,
+// approaching it, trading blows with its footprint and levelling it.
+// It returns false when AttackTarget is not a live enemy building.
+func (w *World) attackBuilding(id entity.ID, u *Unit, def *units.Def) bool {
+	b := w.buildings.Get(u.AttackTarget)
+	if b == nil || b.Owner >= MaxPlayers || b.Owner == u.Owner || b.HP <= 0 {
+		return false
+	}
+	bx, by := buildingCenter(b)
+	reach := fixed.F16(def.Range16)
+	if u.Owner < MaxPlayers {
+		reach += fixed.F16(w.players[u.Owner].Mods.Range16[def.Class])
+	}
+	reach += fixed.F16((b.Size>>1)+1) << 16
+	if near(u.X, u.Y, bx, by, reach) {
+		if u.Cooldown > 0 {
+			return true
+		}
+		dmg := def.Damage + w.udefs.BonusFor(def, 0)
+		if u.Owner < MaxPlayers {
+			dmg += w.players[u.Owner].Mods.Dmg[def.Class]
+		}
+		if dmg < 1 {
+			dmg = 1
+		}
+		b.HP -= dmg
+		u.Cooldown = def.Rate
+		if b.HP <= 0 {
+			w.buildings.Free(u.AttackTarget)
+			u.State = UnitIdle
+			u.AttackTarget = entity.Nil
+			u.AttackKind = 0
+		}
+		return true
+	}
+	if !w.followField(u, b.TileX+b.Size>>1, b.TileY+b.Size>>1) {
+		stepToward(&u.X, &u.Y, bx, by, w.speedOf(u))
+	}
+	return true
 }
 
 // processDeaths frees the fallen, drops huntable corpses and redirects
@@ -292,6 +368,7 @@ func (w *World) processDeaths(dead []entity.ID) {
 		if def != nil && def.CorpseFood > 0 {
 			cid, n := w.nodes.Create()
 			n.Kind = resource.Food
+			n.Corpse = true
 			n.X, n.Y = u.X, u.Y
 			n.TileX, n.TileY = tileOf(u.X), tileOf(u.Y)
 			n.Amount = def.CorpseFood
@@ -307,6 +384,7 @@ func (w *World) processDeaths(dead []entity.ID) {
 				return
 			}
 			g.AttackTarget = entity.Nil
+			g.AttackKind = 0
 			if corpse != entity.Nil && g.Owner != OwnerNeutral && g.Kind == KindVillager {
 				g.Target = corpse
 				g.State = UnitGather
@@ -331,4 +409,67 @@ func mix64(z uint64) uint64 {
 	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
 	z = (z ^ (z >> 27)) * 0x94d049bb133111eb
 	return z ^ (z >> 31)
+}
+
+// towerPhase is the watchtower volley: each completed tower shoots the
+// nearest enemy unit in range, oldest-shot-first via its cooldown.
+func (w *World) towerPhase(markDead func(attacker, victim entity.ID)) {
+	w.buildings.Each(func(id entity.ID, b *Building) {
+		def := w.bdefs.Get(b.DefID)
+		if def == nil || !def.IsTower() || b.Owner >= MaxPlayers ||
+			b.Progress < def.BuildTicks {
+			return
+		}
+		if b.TowerCd > 0 {
+			b.TowerCd--
+			return
+		}
+		cx, cy := buildingCenter(b)
+		limit := int64(def.TowerRange) << 16
+		limit *= limit
+		var best entity.ID
+		var bestD2 int64 = -1
+		w.units.Each(func(uid entity.ID, u *Unit) {
+			if u.HP <= 0 || u.Owner == b.Owner || u.Owner == OwnerNeutral {
+				return
+			}
+			d2 := dist2(cx, cy, u.X, u.Y)
+			if d2 > limit {
+				return
+			}
+			if bestD2 < 0 || d2 < bestD2 || (d2 == bestD2 && uid < best) {
+				bestD2, best = d2, uid
+			}
+		})
+		if best == entity.Nil {
+			return
+		}
+		t := w.units.Get(best)
+		dmg := w.towerDamage(def, t)
+		t.HP -= dmg
+		b.TowerCd = def.TowerRate
+		if t.State == UnitSleep {
+			t.State = UnitWander
+		}
+		if t.HP <= 0 {
+			markDead(entity.Nil, best)
+		}
+	})
+}
+
+// towerDamage resolves one tower shot against a unit: towers shoot
+// arrows (pierce), without class bonuses or tech, floored at 1.
+func (w *World) towerDamage(def *building.Def, target *Unit) int32 {
+	armor := int32(0)
+	if tdef := w.udefs.Get(target.DefID); tdef != nil {
+		armor = tdef.ArmorPierce
+		if target.Owner < MaxPlayers {
+			armor += w.players[target.Owner].Mods.ArmorP[tdef.Class]
+		}
+	}
+	dmg := def.TowerDamage - armor
+	if dmg < 1 {
+		dmg = 1
+	}
+	return dmg
 }

@@ -4,7 +4,10 @@ import * as THREE from 'three';
 // number corner heights, flat shading and per-tile colors. The map is
 // split into fixed-size chunks so the renderer can frustum-cull and
 // refresh fog per chunk; each chunk is one draw call.
-import { HEIGHT_SCALE, TERRAIN_COLORS } from './palette';
+// Visual blending is client-side only: a stable per-tile value jitter,
+// rock color on steep slopes and sand where land touches water.
+import { HEIGHT_SCALE, PALETTE, TERRAIN_COLORS, BIOME_COLORS } from './palette';
+import { hash01 } from './hash';
 
 export interface MeshWindow {
   x0?: number;
@@ -12,6 +15,10 @@ export interface MeshWindow {
   w?: number;
   h?: number;
   stride?: number;
+  // biomes is the optional per-tile biome byte layer (sim/biome ids);
+  // when given, grass and forest tiles pick up their biome's tint so
+  // biomes read at a glance.
+  biomes?: Uint8Array;
 }
 
 // buildTerrainMesh builds (w x h) tiles starting at (x0, y0) of a map
@@ -27,6 +34,7 @@ export function buildTerrainMesh(
   const w = win?.w ?? size;
   const h = win?.h ?? size;
   const stride = win?.stride ?? size + 1;
+  const biomes = win?.biomes;
 
   const vertexCount = w * h * 4;
   const positions = new Float32Array(vertexCount * 3);
@@ -34,6 +42,9 @@ export function buildTerrainMesh(
   const indices = new Uint32Array(w * h * 6);
 
   const color = new THREE.Color();
+  const rockC = new THREE.Color(PALETTE.rock);
+  const sandC = new THREE.Color(PALETTE.sand);
+  const scratch = new THREE.Color();
   const corner = [
     [0, 0],
     [1, 0],
@@ -47,7 +58,43 @@ export function buildTerrainMesh(
       const mapX = x0 + tx;
       const mapY = y0 + ty;
       const tile = tiles[mapY * size + mapX];
+
+      let hMin = Infinity;
+      let hMax = -Infinity;
+      for (const [cx, cy] of corner) {
+        const hh = heights[(mapY + cy) * stride + (mapX + cx)];
+        if (hh < hMin) hMin = hh;
+        if (hh > hMax) hMax = hh;
+      }
+
       color.setHex(TERRAIN_COLORS[tile] ?? 0xff00ff);
+      // biome tint on open ground and forest, so regions read at a glance
+      if (biomes && (tile === 0 || tile === 1)) {
+        const bc = BIOME_COLORS[biomes[mapY * size + mapX]];
+        if (bc !== undefined) {
+          color.lerp(scratch.setHex(bc), 0.45);
+        }
+      }
+      // steep ground reads as rock
+      const slope = (hMax - hMin) * HEIGHT_SCALE;
+      if (slope > 0.55) {
+        const t = Math.min(1, (slope - 0.55) / 1.1) * 0.65;
+        color.lerp(scratch.copy(rockC), t);
+      }
+      // land touching water picks up sand
+      if (tile < 4 && tile !== 3) {
+        const nb =
+          (mapX > 0 && tiles[mapY * size + mapX - 1] >= 4 ? 1 : 0) +
+          (mapX + 1 < size && tiles[mapY * size + mapX + 1] >= 4 ? 1 : 0) +
+          (mapY > 0 && tiles[(mapY - 1) * size + mapX] >= 4 ? 1 : 0) +
+          (mapY + 1 < size && tiles[(mapY + 1) * size + mapX] >= 4 ? 1 : 0);
+        if (nb > 0) {
+          color.lerp(scratch.copy(sandC), Math.min(0.5, 0.2 + 0.15 * nb));
+        }
+      }
+      // stable per-tile brightness jitter to break flat color bands
+      color.multiplyScalar(0.94 + 0.11 * hash01(mapX, mapY, 5));
+
       const base = v;
       for (const [cx, cy] of corner) {
         const hh = heights[(mapY + cy) * stride + (mapX + cx)];

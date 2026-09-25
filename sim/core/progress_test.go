@@ -152,10 +152,52 @@ func TestResearchChainAndMods(t *testing.T) {
 
 func TestRelicControlAndVictory(t *testing.T) {
 	w := flatWorld(1)
-	for _, r := range w.relics {
-		spawnUnitAt(t, w, 0, DefScout, r.X, r.Y)
+	rels0 := w.relics
+	var posts [RelicCount][2]entity.ID
+	for ri := 0; ri < RelicCount; ri++ {
+		// a pair per tile: the first trickle guardians bite hard and
+		// the fallen rise again — a lone post would feed the horde
+		for k := 0; k < 2; k++ {
+			posts[ri][k] = spawnUnitAt(t, w, 0, DefScout, rels0[ri].X, rels0[ri].Y)
+		}
 	}
-	w.Step(nil)
+	// control is presence: scouts that drifted off and are not fighting
+	// get walked back onto their tile; fighting ones keep their attack
+	// (a Move order every tick would cancel it and feed them to the horde)
+	step := func() {
+		var items []orders.MoveItem
+		for ri := 0; ri < RelicCount; ri++ {
+			var ids [2]uint32
+			on, fighting := false, false
+			for k := 0; k < 2; k++ {
+				u := w.units.Get(posts[ri][k])
+				if u == nil || u.HP <= 0 {
+					continue
+				}
+				ids[k] = uint32(posts[ri][k])
+				if u.State == UnitAttack {
+					fighting = true
+				}
+				if tileOf(u.X) == rels0[ri].X && tileOf(u.Y) == rels0[ri].Y {
+					on = true
+				}
+			}
+			if !on && !fighting {
+				for k := 0; k < 2; k++ {
+					if ids[k] != 0 {
+						items = append(items, orders.MoveItem{
+							ID: ids[k], X16: uint16(rels0[ri].X*16 + 8), Y16: uint16(rels0[ri].Y*16 + 8)})
+					}
+				}
+			}
+		}
+		var os []proto.Order
+		if len(items) > 0 {
+			os = append(os, proto.Order{Player: 0, Kind: orders.Move, Payload: orders.MovePayload(items)})
+		}
+		w.Step(os)
+	}
+	step()
 	for i := 0; i < RelicCount; i++ {
 		if w.relics[i].Owner != 0 {
 			t.Fatalf("relic %d not claimed", i)
@@ -166,7 +208,7 @@ func TestRelicControlAndVictory(t *testing.T) {
 		t.Fatalf("relics=%d", pl.Relics)
 	}
 	for i := int32(0); i < RelicGoalTicks+2; i++ {
-		w.Step(nil)
+		step()
 	}
 	owner, kind := w.Winner()
 	if owner != 0 || kind != WinnerRelic {

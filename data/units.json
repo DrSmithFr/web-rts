@@ -44,7 +44,12 @@
       "trainTicks": 16,
       "corpseFood": 0,
       "minEra": 1,
-      "bonuses": [{ "class": 4, "bonus": 10 }]
+      "bonuses": [
+        {
+          "class": 4,
+          "bonus": 10
+        }
+      ]
     },
     {
       "id": 3,
@@ -67,7 +72,12 @@
       "trainTicks": 18,
       "corpseFood": 0,
       "minEra": 1,
-      "bonuses": [{ "class": 2, "bonus": 10 }]
+      "bonuses": [
+        {
+          "class": 2,
+          "bonus": 10
+        }
+      ]
     },
     {
       "id": 4,
@@ -90,7 +100,12 @@
       "trainTicks": 20,
       "corpseFood": 0,
       "minEra": 1,
-      "bonuses": [{ "class": 3, "bonus": 10 }]
+      "bonuses": [
+        {
+          "class": 3,
+          "bonus": 10
+        }
+      ]
     },
     {
       "id": 7,
@@ -113,7 +128,12 @@
       "trainTicks": 22,
       "corpseFood": 0,
       "minEra": 2,
-      "bonuses": [{ "class": 3, "bonus": 6 }]
+      "bonuses": [
+        {
+          "class": 3,
+          "bonus": 6
+        }
+      ]
     },
     {
       "id": 8,
@@ -136,14 +156,19 @@
       "trainTicks": 20,
       "corpseFood": 0,
       "minEra": 2,
-      "bonuses": [{ "class": 2, "bonus": 6 }]
+      "bonuses": [
+        {
+          "class": 2,
+          "bonus": 6
+        }
+      ]
     },
     {
       "id": 5,
       "key": "deer",
       "class": 5,
       "hp": 20,
-      "speed16": 2600,
+      "speed16": 3400,
       "vision": 6,
       "damage": 0,
       "damageType": 0,
@@ -159,6 +184,10 @@
       "trainTicks": 0,
       "corpseFood": 40,
       "flee": true,
+      "fleeRadius": 5,
+      "fleeClear": 9,
+      "sleep": "night",
+      "habitat": "forest",
       "minEra": 0,
       "bonuses": []
     },
@@ -167,7 +196,7 @@
       "key": "boar",
       "class": 5,
       "hp": 40,
-      "speed16": 2200,
+      "speed16": 2400,
       "vision": 5,
       "damage": 6,
       "damageType": 2,
@@ -182,8 +211,236 @@
       "trainBy": 0,
       "trainTicks": 0,
       "corpseFood": 35,
+      "aggro": 6,
+      "sleep": "night",
+      "habitat": "forest",
       "minEra": 0,
       "bonuses": []
+    },
+    {
+      "id": 9,
+      "key": "rabbit",
+      "class": 5,
+      "hp": 6,
+      "speed16": 3100,
+      "vision": 4,
+      "damage": 0,
+      "damageType": 0,
+      "armorPierce": 0,
+      "armorCrush": 0,
+      "range16": 0,
+      "rate": 20,
+      "costFood": 0,
+      "costWood": 0,
+      "costGold": 0,
+      "popCost": 0,
+      "trainBy": 0,
+      "trainTicks": 0,
+      "corpseFood": 12,
+      "flee": true,
+      "fleeRadius": 5,
+      "fleeClear": 8,
+      "sleep": "night",
+      "minEra": 0,
+      "bonuses": []
+    },
+    {
+      "id": 10,
+      "key": "sheep",
+      "class": 5,
+      "hp": 15,
+      "speed16": 1600,
+      "vision": 5,
+      "damage": 0,
+      "damageType": 0,
+      "armorPierce": 0,
+      "armorCrush": 0,
+      "range16": 0,
+      "rate": 20,
+      "costFood": 0,
+      "costWood": 0,
+      "costGold": 0,
+      "popCost": 0,
+      "trainBy": 0,
+      "trainTicks": 0,
+      "corpseFood": 30,
+      "flee": true,
+      "fleeRadius": 4,
+      "fleeClear": 7,
+      "sleep": "night",
+      "minEra": 0,
+      "bonuses": []
+    },
+    {
+      "id": 11,
+      "key": "bear",
+      "class": 5,
+      "hp": 80,
+      "speed16": 2500,
+      "vision": 6,
+      "damage": 14,
+      "damageType": 2,
+      "armorPierce": 2,
+      "armorCrush": 2,
+      "range16": 98304,
+      "rate": 15,
+      "costFood": 0,
+      "costWood": 0,
+      "costGold": 0,
+      "popCost": 0,
+      "trainBy": 0,
+      "trainTicks": 0,
+      "corpseFood": 60,
+      "aggro": 10,
+      "leash": 20,
+      "sleep": "day",
+      "campfireImmune": true,
+      "minEra": 0,
+      "bonuses": []
+    },
+    {
+      "id": 12,
+      "key": "wolf",
+      "class": 5,
+      "hp": 30,
+      "speed16": 3300,
+      "vision": 7,
+      "damage": 8,
+      "damageType": 1,
+      "armorPierce": 0,
+      "armorCrush": 0,
+      "range16": 98304,
+      "rate": 14,
+      "costFood": 0,
+      "costWood": 0,
+      "costGold": 0,
+      "popCost": 0,
+      "trainBy": 0,
+      "trainTicks": 0,
+      "corpseFood": 20,
+      "aggro": 8,
+      "leash": 14,
+      "sleep": "night",
+      "prey": [
+        5,
+        9
+      ],
+      "minEra": 0,
+      "bonuses": []
+    },
+    {
+      "id": 13,
+      "key": "blackwolf",
+      "class": 5,
+      "hp": 36,
+      "speed16": 3500,
+      "vision": 7,
+      "damage": 9,
+      "damageType": 1,
+      "armorPierce": 1,
+      "armorCrush": 0,
+      "range16": 98304,
+      "rate": 14,
+      "costFood": 0,
+      "costWood": 0,
+      "costGold": 0,
+      "popCost": 0,
+      "trainBy": 0,
+      "trainTicks": 0,
+      "corpseFood": 20,
+      "aggro": 8,
+      "leash": 14,
+      "sleep": "day",
+      "prey": [
+        5,
+        9
+      ],
+      "minEra": 0,
+      "bonuses": []
+    },
+    {
+      "id": 14,
+      "key": "zombie",
+      "class": 5,
+      "hp": 30,
+      "speed16": 1700,
+      "vision": 6,
+      "damage": 5,
+      "damageType": 2,
+      "armorPierce": 0,
+      "armorCrush": 0,
+      "range16": 98304,
+      "rate": 22,
+      "costFood": 0,
+      "costWood": 0,
+      "costGold": 0,
+      "popCost": 0,
+      "trainBy": 0,
+      "trainTicks": 0,
+      "corpseFood": 0,
+      "aggro": 10,
+      "leash": 14,
+      "sleep": "day",
+      "chaseLost": 30,
+      "infect": true,
+      "minEra": 0,
+      "bonuses": []
+    },
+    {
+      "id": 15,
+      "key": "ram",
+      "class": 6,
+      "hp": 110,
+      "speed16": 1800,
+      "vision": 4,
+      "damage": 3,
+      "damageType": 2,
+      "armorPierce": 4,
+      "armorCrush": 2,
+      "range16": 98304,
+      "rate": 24,
+      "costFood": 0,
+      "costWood": 120,
+      "costGold": 20,
+      "popCost": 2,
+      "trainBy": 13,
+      "trainTicks": 30,
+      "corpseFood": 0,
+      "minEra": 2,
+      "bonuses": [
+        {
+          "class": 0,
+          "bonus": 35
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "key": "trebuchet",
+      "class": 6,
+      "hp": 50,
+      "speed16": 1200,
+      "vision": 6,
+      "damage": 6,
+      "damageType": 2,
+      "armorPierce": 1,
+      "armorCrush": 1,
+      "range16": 655360,
+      "rate": 60,
+      "costFood": 0,
+      "costWood": 200,
+      "costGold": 60,
+      "popCost": 3,
+      "trainBy": 13,
+      "trainTicks": 50,
+      "corpseFood": 0,
+      "minEra": 2,
+      "bonuses": [
+        {
+          "class": 0,
+          "bonus": 80
+        }
+      ]
     }
   ]
 }

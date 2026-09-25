@@ -1,0 +1,9 @@
+{
+  "biomes": [
+    { "id": 0, "key": "temperate", "farmMul": 1000, "tree": 2 },
+    { "id": 1, "key": "taiga", "farmMul": 600, "tree": 1 },
+    { "id": 2, "key": "savanna", "farmMul": 800, "tree": 4 },
+    { "id": 3, "key": "coast", "farmMul": 900, "tree": 3 },
+    { "id": 4, "key": "prairie", "farmMul": 1250, "tree": 2 }
+  ]
+}

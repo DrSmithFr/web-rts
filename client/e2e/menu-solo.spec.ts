@@ -10,7 +10,7 @@ declare global {
       local(): number;
       tick(): number;
       units(): { id: number; owner: number; kind: number }[];
-      nodes(): { id: number; kind: number; amount: number }[];
+      nodes(): { id: number; kind: number; tree: number; amount: number }[];
       economy(): { res: number[]; era: number; pop: number }[];
       kinds: Record<string, number>;
       payload: Record<string, (...args: number[]) => Uint8Array>;
@@ -31,7 +31,7 @@ test('main menu starts a solo game that harvests its first resource', async ({ p
   // order every villager to a food node
   const ordered = await page.evaluate(() => {
     const r = window.__rts;
-    const food = r.nodes().filter((n) => n.kind === 3 && n.amount > 0);
+    const food = r.nodes().filter((n) => n.kind === 3 && n.tree === 0 && n.amount > 0);
     if (food.length === 0) return 0;
     const vills = r.units().filter((u) => u.owner === r.local() && u.kind === 1);
     for (const v of vills) r.issue(r.kinds.Gather, r.payload.gather(v.id, food[0].id));

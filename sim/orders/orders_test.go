@@ -66,12 +66,20 @@ func encodeArgs(t *testing.T, kind, args string) []byte {
 		}
 		return TrainPayload(u32(t, args))
 	case "attack":
+		idsPart, rest, _ := strings.Cut(args, ":")
+		target, kind, _ := strings.Cut(rest, ":")
+		var ids []uint32
+		for _, s := range strings.Split(idsPart, ";") {
+			ids = append(ids, u32(t, s))
+		}
+		return AttackPayload(ids, u32(t, target), uint8(u32(t, kind)))
+	case "repair":
 		idsPart, target, _ := strings.Cut(args, ":")
 		var ids []uint32
 		for _, s := range strings.Split(idsPart, ";") {
 			ids = append(ids, u32(t, s))
 		}
-		return AttackPayload(ids, u32(t, target))
+		return RepairPayload(ids, u32(t, target))
 	case "patrol":
 		idsxy, _, _ := strings.Cut(args, ":")
 		var ids []uint32
@@ -145,7 +153,8 @@ func decodeArgs(t *testing.T, kind, args string, raw []byte) {
 			}
 		}
 	case "attack":
-		idsPart, target, _ := strings.Cut(args, ":")
+		idsPart, rest, _ := strings.Cut(args, ":")
+		target, kindS, _ := strings.Cut(rest, ":")
 		n := int(r.Uvarint())
 		if n != len(strings.Split(idsPart, ";")) {
 			t.Fatalf("attack n %d", n)
@@ -157,6 +166,26 @@ func decodeArgs(t *testing.T, kind, args string, raw []byte) {
 		}
 		if uint32(r.Uvarint()) != u32(t, target) {
 			t.Error("attack target mismatch")
+		}
+		if uint8(r.Uvarint()) != uint8(u32(t, kindS)) {
+			t.Error("attack target kind mismatch")
+		}
+	case "repair":
+		idsPart, target, _ := strings.Cut(args, ":")
+		n := int(r.Uvarint())
+		if n != len(strings.Split(idsPart, ";")) {
+			t.Fatalf("repair n %d", n)
+		}
+		for _, want := range strings.Split(idsPart, ";") {
+			if uint32(r.Uvarint()) != u32(t, want) {
+				t.Error("repair id mismatch")
+			}
+		}
+		if uint32(r.Uvarint()) != u32(t, target) {
+			t.Error("repair building mismatch")
+		}
+		if uint8(r.Uvarint()) != TargetBuilding {
+			t.Error("repair target kind mismatch")
 		}
 	case "patrol":
 		idsxy, _, _ := strings.Cut(args, ":")

@@ -5,6 +5,280 @@ merges (`vNN-phase-name`).
 
 ## Unreleased
 
+## [v12-zombie-sieges-fortifications] - 2026-09-25
+
+Phase 12: night zombie sieges over relics, plus fortifications and siege engines.
+
+### Added
+
+- Zombie guardians: relics trickle night-bound guardians from their den
+  while unclaimed (capped per relic, sealed once a player holds it);
+  by day they are ghosts, by night they hunt; every human they kill
+  rises again bound to the same relic.
+- Relic control is presence: standing military refreshes the claim, an
+  abandoned tile drains through a grace period and reverts to neutral,
+  so held relics become nightly siege objectives.
+- Fortifications and siege: wall, watchtower (auto-attacks nearby
+  enemies; shots, cooldown and targets in the world hash) and siege
+  workshop; battering ram and trebuchet with bonus-vs-building data
+  (unit class Siege); tower state hashed (`rts.world/v13`).
+- Client models and names for zombies, siege units, walls, watchtowers
+  and siege workshops.
+- Core tests: watchtower shooting/range/neutral rules, siege demolishes
+  buildings faster than infantry, walls block and absorb (400 hp),
+  siege combat determinism; garrison and relic-drain tests in `progress_test.go`.
+
+### Changed
+
+- Bot doctrine rewritten around the siege loop: garrison-aware army
+  bookkeeping, nearest-unit relic parking and relief marches, siege
+  demand scales the army cap, and relic moves outrank probe moves in
+  the same reaction batch. Build plans are no longer blocked by having
+  any of the same type, so the bot now builds multiple huts/campfires
+  and grows past the old population cap.
+- The server relic-victory test now validates a brain-driven victory
+  through the full room/relay/mirror pipeline; scripted runs no longer
+  survive the presence-based relic rules.
+- `make test` replays re-recorded under the v13 hash.
+
+Phase 10: procedural map generation spec — biomes, tree species, sawmill
+gating and biome-driven agriculture. Simulation-affecting: map format
+`rts.map/v4`, world `rts.world/v7`, replays regenerated.
+
+Phase 11: the wildlife ecosystem — rabbit, sheep, bear, wolf and black
+wolf join deer and boar, all driven by sleep schedules, habitats, flee
+and aggro radii, leashes and settlement fear, with campfires as shelters.
+Simulation-affecting: map format `rts.map/v6`, world `rts.world/v11`,
+replays regenerated.
+
+### Added
+
+- `data/trees.json` and `data/biomes.json` (embedded in `assets.go`):
+  chop speed, wood/food yields and sawmill requirement per species;
+  agriculture multiplier and dominant tree per biome — all tunable
+  without touching code (W4, H4).
+- `sim/tree` and `sim/biome`: validated balance tables with
+  deterministic ids mirrored client-side (`TREE`, `BIOME` in palette).
+- Worldgen biome layer (`sim/worldgen`): temperature latitude ramp +
+  noise, moisture and a distance-to-water flood classify every tile;
+  regions are contiguous with gradual borders and a cold-north /
+  warm-south fallback guarantees at least three biomes (B1..B4).
+- Trees grow in their biome: taiga spruce, temperate and prairie birch,
+  savanna baobab (forest tiles plus scattered individuals), coast palms
+  on sand (food only). Forest noise punches clearings (B5); every
+  player's starter ring is fast-chop birch.
+- Mountain mask: rock only falls inside localized noise massifs, so
+  mountains cluster instead of speckling (T2), and a land mask lifts the
+  map rim so one walkable component dominates.
+- Spawns are flat (vertex spread checked, disk averaged at stamping,
+  T3) and every spawn is chosen inside the largest land component, so
+  one player reaches every other (T4, C2).
+- Species-chop speed in `sim/core` (fixed-point `GatherAcc` remainder),
+  sawmill gate on baobab chops (orders refused and in-progress gather
+  dropped, W3), farms (`farm` building, id 10) producing food at the
+  biome multiplier of their tile (H1, H2, C7).
+- `sawmill` (id 9) and `farm` (id 10) buildings in `data/buildings.json`.
+- Gather chaining (`sim/core`): when a node runs dry, the gatherer
+  auto-retargets the nearest still-harvestable node in vision — same
+  resource kind and same tree species first, then same kind — chaining
+  trees, bushes, stone and gold without new orders (sawmill gating
+  respected). Finished carcasses chain back to live, harmless prey
+  (deer; boars are never auto-attacked), tracked by a new `Corpse` node
+  flag; world hash v8, replays re-recorded.
+- Bridge v0.2.0: `mapBiomes(id)`, `biomeDefs(id)`, `treeDefs(id)`, tree
+  byte in node records.
+- Client: ground and minimap tinted per biome (B1), one silhouette and
+  palette entry per tree species so species reads before a chop (W1),
+  hover shows biome + farm multiplier and tree names with a
+  "sawmill required" hint (H3, W3); i18n names for biomes, trees and
+  the two new buildings.
+- Fixed: order rings now sit on the terrain surface instead of sinking
+  under raised ground; right-click gather picks the node nearest the
+  cursor on screen instead of the first one in a fixed 3×3 scan order.
+- Attack orders now name the target store (units vs buildings) with a
+  `TargetKind` wire byte and a hashed `Unit.AttackKind` (world v8→v9):
+  soldiers can raz enemy buildings (new right-click on an enemy
+  building), while gather orders are villager-only — soldiers no longer
+  harvest.
+- New `Repair` order (right-click on your own building under
+  construction) reassigns villagers to finish an interrupted
+  construction.
+- Procedural audio (Tone.js, no samples): `client/src/audio` runs a
+  seeded music engine — fixed tonic and minor scale per match, chord
+  progression in 4/8-bar blocks, a mutating 2-bar motif — with four
+  capped synth layers (pad, bass, melody, percussion). The game feeds
+  it a mood (`calm`/`tension`/`combat`, applied at the next bar with
+  gain fades and tempo ramps) and the biome under the camera (timbre
+  only). Victory and defeat themes close the match. Procedural sound
+  effects cover selection, orders, hits, deaths, placement, completed
+  buildings and age-ups; music and effects volumes are separate and
+  persisted, adjustable from the Options screen.
+- Day/night cycle: one 8-minute cycle (9600 ticks) derived purely from
+  the sim tick — no world state, hash or replay impact. Canonical
+  `sim/day` package (phase, solar elevation, night check) mirrored
+  client-side with matching tests. Rendering rotates the sun direction,
+  fades to a pale moon after dusk, crossfades hemisphere fill, fog and
+  sky gradient between warm day, golden dusk and blue night palettes,
+  and shifts tone-mapping exposure. Ready for behavior systems to
+  consume the phase. Campfires are real light sources: each standing
+  campfire gets an animated flame, and the nearest ones (pool of 8
+  point lights) cast a warm flickering glow that strengthens with the
+  night.
+
+- `sim/core` wildlife AI, driven entirely by new `data/units.json`
+  stat fields — sleep schedule (`"day"`/`"night"`, with a reduced wake
+  radius), flee radius/clear-distance, aggro, leash to the spawn den,
+  habitat, campfire immunity and a prey list — so every species tunes
+  in data, adds no RNG streams and stays hash-stable.
+- Five new species: rabbit and sheep (prey near every base), the bear
+  (a rare rock-dwelling daytime sleeper, immune to campfires), the
+  grey wolf (hunts by day) and the black wolf (hunts by night); wolves
+  only ever attack isolated prey, skipping any unit escorted by three
+  or more companions within four tiles.
+- Deer and boar re-tuned onto the same fields: deer flee forest-first
+  at night, boars charge within six tiles but lose their aggro inside
+  a campfire's seven-tile aura — completed campfires keep passive
+  animals out entirely, and aggressive ones retreat.
+- Habitat-first den placement: deer, sheep and rabbits form the larder
+  around each spawn, while every aggressive den (boar, wolf, black
+  wolf, bear) sits beyond `WildZone` (60 tiles) from all spawns, bears
+  capped at three on mountain rock; aggressive dens also stay beyond
+  `RelicClear` (40 tiles) from every relic, so contesting the center
+  is a journey, not a siege of a den.
+- All five new species get low-poly models, palette tints and i18n
+  names; sleeping animals visibly settle onto the ground.
+
+### Changed
+
+- Bot hunting prey lists exclude boars — they charge and gore hunting
+  parties; bots take deer, rabbits and sheep instead.
+- Neutral animals fight back: struck or roused animals bite the nearest
+  attacker (still respecting the wolf escort rule), and wolves predate
+  deer and rabbits for real — neutral-versus-neutral combat is allowed.
+- The relic-victory functional test now marches its lancer with the
+  whole home village: an escorted party deters wolves by design.
+
+### Fixed
+
+- Nodes (trees, ore, berries) are placed with the bilinear ground sample
+  at their center instead of the tile-corner height, so they never float
+  above or sink into sloped terrain — visible even on stumps.
+- Starting storehouses now clear the resource nodes under their footprint
+  (`clearNodesUnder`); bases never spawn on top of trees or berries.
+  World hash `rts.world/v9` → `v10`, all five replays re-recorded.
+- Selection no longer confuses a unit and a building with the same entity
+  id (the stores count independently): building selection keys carry a
+  client-side offset, rings and panels highlight exactly one kind, and
+  order payloads (stop/attack/repair) always send raw ids.
+- Placement ghost is the translucent building itself (real materials) on
+  a footprint overlay that turns red over nodes, buildings or the map
+  border.
+- Panel costs reuse the resbar icons (wood/stone/food/gold) via shared
+  SVG symbols; depleted nodes darken and shrink, trees leave stumps;
+  harvesting pops a floating `+N` in the resource color; hovering a unit
+  shows its name and HP; unit silhouettes, contact shadows, rings and
+  HP bars scale with camera distance; minimap shows a dim terrain preview
+  of unexplored ground plus node and building dots; zoom-out is clamped
+  closer and the pan bounds tightened.
+- Panel buttons survive progress refreshes: the panel HTML is rebuilt only
+  when its structural signature changes, progress bars update in place and
+  a single delegated click handler serves all buttons — clicks no longer
+  vanish mid-rebuild. Click-vs-drag threshold widened to 12 px (jittery
+  clicks select instead of starting a micro rect-drag that missed the
+  unit's foot point), right-drag camera rotation no longer issues a
+  move/attack order, and right-clicks begun on the HUD never leak a world
+  order.   Hover chip no longer intercepts clicks.
+- Clicking an entity's model now selects it: units, animals and buildings
+  are picked by the screen segment from their feet to their model top
+  (heights measured from the render geometry bounding boxes), with the
+  radius growing as the model looks bigger on screen — roofs and heads
+  are clickable, not just the ground tile under the feet. Box-select
+  and enemy attack-target picking use the same body segments.
+
+### Tests
+
+- `sim/tree`, `sim/biome` table tests; core tests pin chop-speed order,
+  palm food-only yields, baobab sawmill gating and farm multipliers per
+  biome (C6, C7).
+- `worldgen`: acceptance test over 20 seeds (plains majority, flat and
+  connected spawns, >=3 biomes, all four species present in-biome) plus
+  a biome contiguity check (C1..C5).
+- `mapstat -accept N` exposes the same gate as a tool; five replays
+  re-recorded and verified on `rts.world/v7`, native/wasm parity holds.
+- Playwright: e2e/perf specs retry once (two attempts maximum per the
+  testing policy).
+- Vitest: audio generation specs (seed reproducibility, diatonic-only
+  progressions, motif bounds and mutation size, mood/layer table).
+- `sim/core/wildlife_test.go`: thirteen behavior contracts — sleep
+  schedules and wake radii, the campfire shield (repulse, aggro-drop,
+  bear immunity), boar charges, bear leash, the wolf isolation rule and
+  the grey/black day-night hunter split, rabbit predation corpses.
+- `sim/worldgen/fauna_test.go`: habitat, WildZone and RelicClear
+  contracts over 20 seeds; all five replays re-recorded and verified on
+  `rts.map/v6`/`rts.world/v11` with native/wasm parity holding.
+
+### Notes
+
+- Fixed a Makefile staleness trap: `bin/rts-server` now depends on
+  `sim/` sources.
+- E2E specs gather berries explicitly (`tree === 0`) since palms are
+  food nodes too.
+
+## [v09-graphics] - 2026-09-23
+
+Phase 9: the graphics pass — code-generated low-poly models, rigid-part
+animation, terrain art, combat effects, lighting and a UI redesign.
+Client-side only: the simulation byte stream is untouched, all effect
+state derives from snapshot deltas and interpolated positions.
+
+### Added
+
+- `client/src/render/models.ts`: unit and building models authored as
+  painted primitives merged into per-def geometry, split into a static
+  body, a player-tinted insignia mesh and named animated parts whose
+  joints sit at the geometry origin. Budget: ≤300 triangles per model
+  (asserted by tests).
+- `client/src/render/animate.ts`: pure animation math — shortest-angle
+  yaw stepping, distance-driven walk phase, eased swing amplitude.
+- `client/src/render/hash.ts`: stable integer hash for decor scatter
+  and per-instance jitter.
+- Actors rebuilt (`actors.ts`): eight distinct units with facing from
+  movement, target-facing in fight/gather/build states, leg/arm/weapon
+  cycles, villagers visibly carry the gathered resource kind, HP bars
+  billboard over damaged units, pulsing selection torus.
+- Buildings rebuilt (`buildings.ts`): eight distinct silhouettes with
+  player insignia parts, foundation/scaffold/rising-core construction
+  visuals, flickering campfire flames.
+- Terrain art (`terrainMesh.ts`, `water.ts`, `scatter.ts`): per-tile
+  brightness jitter, rock color on steep slopes, sand shoreline blending,
+  translucent animated water surface (shared-`uTime` shader ripple),
+  deterministic decor scatter — canopy trees on forest tiles, tufts,
+  flowers, pebbles, shore reeds.
+- `client/src/render/fx.ts`: additive instanced spark bursts (hit,
+  death, harvest pops) and expanding ground order rings.
+- Lighting and camera: ACES tone mapping, re-tuned sky/fog, shadow
+  frustum follows the view (`frameShadow`), zoom/pan/yaw easing in
+  `RtsCamera`.
+- UI redesign in `index.html` + panel DOM: brass/ink theme with blurred
+  panels, SVG resource chips with change-flash, era pips, progress bars
+  for training/research/aging/building, framed minimap moved bottom-left,
+  victory/net-status animations.
+- i18n: added the missing unit/building names and `res.pop`,
+  `res.relics` keys; resource chip tooltips are localized.
+
+### Tests
+
+- New Vitest tables for `hash`, `animate` and the model triangle budget
+  (30 new tests; client suite now 77).
+- `make test` green end to end; 500-unit E2E perf spec holds.
+
+### Notes
+
+- Palette (`palette.ts`) formalized as the curated ~26-color set;
+  decor, material and fire entries added, no hues outside the file.
+- `CHROMIUM=/usr/bin/chromium` must be set for `make test-e2e` when the
+  bundled Playwright browsers are not installed.
+
 ## [v08-bots-menus-e2e] - 2026-09-22
 
 Phase 8: deterministic bot AI, game menus, and Playwright end-to-end tests.

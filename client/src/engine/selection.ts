@@ -41,6 +41,9 @@ export interface ScreenPoint {
   id: number;
   sx: number;
   sy: number;
+  // syTop is the screen y of the top of the entity's body: a box drag
+  // over the model (not just its feet) still selects it.
+  syTop?: number;
   onScreen: boolean;
 }
 
@@ -66,7 +69,10 @@ export function selectInRect(points: ScreenPoint[], rect: Rect): number[] {
   const out: number[] = [];
   for (const p of points) {
     if (!p.onScreen) continue;
-    if (p.sx >= rect.x0 && p.sx <= rect.x1 && p.sy >= rect.y0 && p.sy <= rect.y1) {
+    const inFoot = p.sx >= rect.x0 && p.sx <= rect.x1 && p.sy >= rect.y0 && p.sy <= rect.y1;
+    const inTop =
+      p.syTop !== undefined && p.syTop >= rect.y0 && p.syTop <= rect.y1 && p.sx >= rect.x0 && p.sx <= rect.x1;
+    if (inFoot || inTop) {
       out.push(p.id);
       if (out.length >= MAX_SELECTION) break;
     }

@@ -79,7 +79,7 @@ bin/detcheck: $(wildcard tools/detcheck/*.go) $(wildcard sim/*/*.go)
 	node tools/fsutil.mjs mkdir bin
 	$(GO) build -trimpath -o bin/detcheck ./tools/detcheck
 
-bin/rts-server: server/*.go server/wire/*.go
+bin/rts-server: server/*.go server/wire/*.go $(wildcard sim/*/*.go)
 	go build -o bin/rts-server ./server/cmd
 
 run-server: bin/rts-server

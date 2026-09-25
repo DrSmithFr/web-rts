@@ -12,6 +12,7 @@ export interface RawSim {
   seed(id: number): number;
   mapSize(id: number): number;
   mapTiles(id: number): Uint8Array;
+  mapBiomes(id: number): Uint8Array;
   mapHeights(id: number): Uint8Array;
   mapHashHex(id: number): string;
   spawnCount(id: number): number;
@@ -24,6 +25,8 @@ export interface RawSim {
   unitDefs(id: number): UnitDefJson[];
   eras(id: number): EraDefJson[];
   techDefs(id: number): TechDefJson[];
+  biomeDefs(id: number): BiomeDefJson[];
+  treeDefs(id: number): TreeDefJson[];
   playerTechs(id: number, player: number): number[];
   victory(id: number): { winner: number; kind: number };
   relicsBlob(id: number): Uint8Array;
@@ -63,6 +66,24 @@ export interface BuildingDefJson {
   trainFood: number;
   trainTicks: number;
   minEra: number;
+  farmFoodMilli: number;
+}
+
+export interface BiomeDefJson {
+  id: number;
+  key: string;
+  // farmMul is the agriculture multiplier in milli (1000 = 1.0x).
+  farmMul: number;
+  tree: number;
+}
+
+export interface TreeDefJson {
+  id: number;
+  key: string;
+  gatherMul: number;
+  wood: number;
+  food: number;
+  sawmill: boolean;
 }
 
 export interface UnitBonusJson {

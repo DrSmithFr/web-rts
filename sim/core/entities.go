@@ -27,6 +27,7 @@ const (
 	UnitPatrol uint8 = 6
 	UnitWander uint8 = 7
 	UnitFlee   uint8 = 8
+	UnitSleep  uint8 = 9
 )
 
 // Unit def ids fixed by data/units.json order.
@@ -39,6 +40,14 @@ const (
 	DefBoar        uint16 = 6
 	DefKnight      uint16 = 7
 	DefCrossbowman uint16 = 8
+	DefRabbit      uint16 = 9
+	DefSheep       uint16 = 10
+	DefBear        uint16 = 11
+	DefWolf        uint16 = 12
+	DefBlackWolf   uint16 = 13
+	DefZombie      uint16 = 14
+	DefRam         uint16 = 15
+	DefTrebuchet   uint16 = 16
 )
 
 // Building def ids fixed by data/buildings.json order.
@@ -51,6 +60,11 @@ const (
 	BldForge      uint16 = 6
 	BldBank       uint16 = 7
 	BldWonder     uint16 = 8
+	BldSawmill    uint16 = 9
+	BldFarm       uint16 = 10
+	BldWall       uint16 = 11
+	BldWatchtower uint16 = 12
+	BldSiegeWs    uint16 = 13
 )
 
 // WinnerKind values for the game-over banner.
@@ -98,6 +112,36 @@ const (
 	// FleeClearRadius is the distance at which a fleeing animal calms down.
 	FleeClearRadius int32 = 7
 
+	// CampfireAura is the radius in tiles where completed campfires
+	// repulse shy animals and calm aggressive ones (bears are immune).
+	CampfireAura int32 = 7
+
+	// SleepWake is how much smaller the wake-up detection radius is
+	// compared to the species detection radius while sleeping.
+	SleepWake int32 = 3
+
+	// PreyGuardRadius measures how close friendly units must stand to
+	// count as escorting a prey; PreyEscortMax escorts means the prey is
+	// grouped and predators look for an isolated target instead.
+	PreyGuardRadius int32 = 4
+	PreyEscortMax   int32 = 3
+
+	// ZombieTrickleTicks is the period (ticks) between relic-den spawn
+	// pulses, fired at ZombieTrickleOffset (deep midnight, one pulse a
+	// night) only for UNCLAIMED relics, up to ZombieHordeCap per relic —
+	// slow dread that a determined player can end, not an infinite siege.
+	ZombieTrickleTicks  int32 = 9600
+	ZombieTrickleOffset int32 = 6720
+	ZombieHordeCap      int32 = 1
+
+	// NoRelic marks a unit not bound to any relic.
+	NoRelic uint8 = 255
+
+	// RelicOwnerGrace is how long (ticks) a relic stays claimed after
+	// the owner's garrison stops standing on it — enough to finish a
+	// skirmish or walk a few tiles back, not enough to forget it.
+	RelicOwnerGrace int32 = 4800
+
 	// MaxFields caps concurrent flow fields; the oldest is evicted.
 	MaxFields = 64
 
@@ -134,26 +178,42 @@ type Unit struct {
 	State  uint8
 	X, Y   fixed.F16
 	TX, TY fixed.F16
+	// HomeX/HomeY is the spawn point; leashed species roam near it.
+	HomeX, HomeY fixed.F16
 	// PatrolX/Y is the other end of a patrol segment.
 	PatrolX, PatrolY fixed.F16
-	// Target is a gather node or build site; AttackTarget is the unit id
-	// chased while State == UnitAttack.
-	Target       entity.ID
+	// Target is a gather node or build site.
+	Target entity.ID
+	// AttackTarget is the unit or building id named by AttackKind
+	// (orders.TargetUnit/TargetBuilding, 0 = none), chased while
+	// State == UnitAttack.
 	AttackTarget entity.ID
+	AttackKind   uint8
 	// Field is the active flow field; FieldX/Y its goal tile.
 	Field  entity.ID
 	FieldX int32
 	FieldY int32
 	// Cooldown ticks down between weapon strikes.
 	Cooldown int32
+	// Relic is the relic index (0..RelicCount-1) a zombie is bound to,
+	// NoRelic for every other unit.
+	Relic    uint8
 	CarriedK resource.Kind
 	Carried  int32
-	HP       int32
+	// GatherAcc is the fixed-point remainder of the per-tick chop amount
+	// when the target node is a tree species whose speed differs from
+	// the base gather rate (fractional part, 16.16).
+	GatherAcc int32
+	HP        int32
 }
 
-// Node is a harvestable resource node payload.
+// Node is a harvestable resource node payload. Tree is the species id
+// for wood and palm nodes (see sim/tree), 0 for other kinds. Corpse
+// marks a hunted-animal carcass, whose gatherer chains to live prey.
 type Node struct {
 	Kind   resource.Kind
+	Tree   uint8
+	Corpse bool
 	X, Y   fixed.F16
 	TileX  int32
 	TileY  int32
@@ -174,7 +234,12 @@ type Building struct {
 	TrainLeft  int32
 	TrainReq   int32
 	TrainQueue [MaxTrainQueue]uint16
-	HP         int32
+	// FarmAcc is the fixed-point food accumulated between whole units by
+	// a completed farm, at the biome multiplier of its tile (16.16).
+	FarmAcc int32
+	HP      int32
+	// TowerCd is the shots' remaining cooldown for a completed tower.
+	TowerCd int32
 }
 
 // Player is one player's economy and progress state. Mods is derived
@@ -209,6 +274,11 @@ type Player struct {
 type Relic struct {
 	X, Y  int32
 	Owner uint8
+	// Hold counts down toward neutral while no military of Owner stands
+	// on the tile (refreshed every tick presence shows) — a skirmish
+	// that drags the garrison a few tiles off does not lose the relic,
+	// but abandoning it does.
+	Hold int32
 }
 
 // FogState returns the raw fog state (0 unexplored, 1 explored, 2

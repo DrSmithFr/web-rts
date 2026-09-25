@@ -23,3 +23,13 @@ var ErasJSON []byte
 //
 //go:embed data/techs.json
 var TechsJSON []byte
+
+// TreesJSON is the raw content of data/trees.json.
+//
+//go:embed data/trees.json
+var TreesJSON []byte
+
+// BiomesJSON is the raw content of data/biomes.json.
+//
+//go:embed data/biomes.json
+var BiomesJSON []byte

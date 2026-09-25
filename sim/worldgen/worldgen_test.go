@@ -143,16 +143,23 @@ func TestNodesPlaced(t *testing.T) {
 			t.Fatalf("two nodes on tile %v", key)
 		}
 		byTile[key] = true
-		switch n.Kind {
-		case 1:
+		// Palms are food nodes too; berries are the food nodes near spawns.
+		berried := false
+		for _, s := range m.Spawns() {
+			if dist2(int(n.X), int(n.Y), s[0], s[1]) <= 10*10 {
+				berried = true
+			}
+		}
+		switch {
+		case n.Kind == 1:
 			wood++
-		case 2:
+		case n.Kind == 2:
 			stone++
-		case 3:
+		case n.Kind == 3 && n.Tree == 0 && berried:
 			food++
-		case 4:
+		case n.Kind == 4:
 			gold++
-		case 5:
+		case n.Kind == 5:
 			oil++
 		}
 	}
@@ -217,5 +224,145 @@ func TestLargeMapGeneration(t *testing.T) {
 	}
 	if len(m1.Nodes()) < 100000 {
 		t.Fatalf("suspiciously few nodes on a large map: %d", len(m1.Nodes()))
+	}
+}
+
+// TestAcceptance20Seeds runs the spec's acceptance criteria C1..C5 (the
+// map-side ones) over 20 seeds: plains dominate, starts are flat and
+// mutually reachable, at least three biomes appear, and every tree
+// species shows up inside its own biome.
+func TestAcceptance20Seeds(t *testing.T) {
+	for seed := uint64(1); seed <= 20; seed++ {
+		m, err := Generate(seed, DefaultSize, DefaultPlayers)
+		if err != nil {
+			t.Fatalf("seed %d: %v", seed, err)
+		}
+		size := m.Grid().Size()
+		plains, biomes := 0, map[uint8]int{}
+		for i, t := range m.Grid().Tiles() {
+			if t == terrain.Grass || t == terrain.Forest || t == terrain.Sand {
+				plains++
+			}
+			biomes[m.Biomes()[i]]++
+		}
+		if plains*2 <= size*size {
+			t.Errorf("seed %d: plains %.1f%%, want majority", seed, 100*float64(plains)/float64(size*size))
+		}
+		if len(biomes) < 3 {
+			t.Errorf("seed %d: only %d biomes", seed, len(biomes))
+		}
+		var species [5]int
+		for _, n := range m.Nodes() {
+			if n.Tree == 0 {
+				continue
+			}
+			species[n.Tree]++
+			// Trees grow in their biome, except the universal starter-ring
+			// birch and spruce fallbacks on non-taiga forest tiles.
+			b := m.BiomeAt(int(n.X), int(n.Y))
+			switch n.Tree {
+			case 3: // palm: coast only
+				if b != biomeCoast {
+					t.Errorf("seed %d: palm at (%d,%d) in biome %d", seed, n.X, n.Y, b)
+				}
+			case 4: // baobab: savanna only
+				if b != biomeSavanna {
+					t.Errorf("seed %d: baobab at (%d,%d) in biome %d", seed, n.X, n.Y, b)
+				}
+			}
+		}
+		for sp, want := range map[uint8]int{1: 1, 2: 1, 3: 1, 4: 1} {
+			if species[sp] < want {
+				t.Errorf("seed %d: species %d count %d", seed, sp, species[sp])
+			}
+		}
+		for _, s := range m.Spawns() {
+			checkSpawnFlat(t, seed, m.Grid(), s)
+		}
+		checkSpawnsConnected(t, seed, m)
+	}
+}
+
+const (
+	biomeCoast   uint8 = 3
+	biomeSavanna uint8 = 2
+)
+
+// checkSpawnFlat verifies the starting disk vertices are flat (T3).
+func checkSpawnFlat(t *testing.T, seed uint64, g *terrain.Grid, s [2]int) {
+	t.Helper()
+	hi, lo := int32(0), int32(127)
+	for dy := -4; dy <= 4; dy++ {
+		for dx := -4; dx <= 4; dx++ {
+			if dx*dx+dy*dy > 16 {
+				continue
+			}
+			v := g.Vertex(s[0]+dx, s[1]+dy)
+			if v > hi {
+				hi = v
+			}
+			if v < lo {
+				lo = v
+			}
+		}
+	}
+	if hi-lo != 0 {
+		t.Fatalf("seed %d spawn %v: vertex spread %d on the building disk", seed, s, hi-lo)
+	}
+}
+
+// checkSpawnsConnected floods walkable land (water blocks, rock does not)
+// from the first spawn and reaches every other one (T4).
+func checkSpawnsConnected(t *testing.T, seed uint64, m *Map) {
+	t.Helper()
+	size := m.Grid().Size()
+	spawns := m.Spawns()
+	seen := make([]bool, size*size)
+	s0 := spawns[0]
+	queue := []int{s0[1]*size + s0[0]}
+	seen[queue[0]] = true
+	for head := 0; head < len(queue); head++ {
+		i := queue[head]
+		x, y := i%size, i/size
+		for _, o := range [4][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+			nx, ny := x+o[0], y+o[1]
+			if nx < 0 || ny < 0 || nx >= size || ny >= size {
+				continue
+			}
+			j := ny*size + nx
+			if !seen[j] && !m.Grid().Tiles()[j].Water() {
+				seen[j] = true
+				queue = append(queue, j)
+			}
+		}
+	}
+	for _, s := range spawns {
+		if !seen[s[1]*size+s[0]] {
+			t.Fatalf("seed %d: spawn %v unreachable", seed, s)
+		}
+	}
+}
+
+// TestBiomeContiguity checks biome regions are clumps, not confetti (B2):
+// almost every tile shares its biome with at least one neighbour.
+func TestBiomeContiguity(t *testing.T) {
+	m, err := Generate(0x5eed, DefaultSize, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := m.Grid().Size()
+	solo := 0
+	for y := 1; y < size-1; y++ {
+		for x := 1; x < size-1; x++ {
+			b := m.BiomeAt(x, y)
+			if m.BiomeAt(x+1, y) != b && m.BiomeAt(x-1, y) != b &&
+				m.BiomeAt(x, y+1) != b && m.BiomeAt(x, y-1) != b {
+				solo++
+			}
+		}
+	}
+	total := (size - 2) * (size - 2)
+	if solo*100 > total {
+		t.Fatalf("%d/%d tiles have no same-biome neighbour, want < 1%%", solo, total)
 	}
 }
