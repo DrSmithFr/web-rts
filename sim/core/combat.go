@@ -1,6 +1,7 @@
 package core
 
 import (
+	"rts/sim/building"
 	"rts/sim/entity"
 	"rts/sim/fixed"
 	"rts/sim/fog"
@@ -34,8 +35,8 @@ func (w *World) applyAttack(player uint8, p []byte) bool {
 		}
 	default:
 		t := w.units.Get(target)
-		if t == nil || t.Owner == player || t.HP <= 0 {
-			return true // well-formed order at a stale target: no-op
+		if t == nil || t.Owner == player || t.HP <= 0 || w.zombieGhosted(t) {
+			return true // stale target, or a ghost no one can see
 		}
 	}
 	for _, id := range ids {
@@ -158,13 +159,35 @@ func (w *World) attackDamage(att *units.Def, attOwner uint8, target *Unit) int32
 func (w *World) combatPhase() {
 	w.cooldownTick()
 	var dead []entity.ID
-	markDead := func(id entity.ID) {
+	type kill struct {
+		killer entity.ID
+		victim entity.ID
+		human  bool
+		x, y   fixed.F16
+	}
+	var kills []kill
+	markDead := func(attacker, victim entity.ID) {
 		for _, d := range dead {
-			if d == id {
+			if d == victim {
 				return
 			}
 		}
-		dead = append(dead, id)
+		dead = append(dead, victim)
+		if u := w.units.Get(victim); u != nil {
+			vdef := w.udefs.Get(u.DefID)
+			// the walking dead raise the helpless — unarmed villagers —
+			// not armored soldiers, so a battlefield of troops does not
+			// snowball into an unkillable horde
+			human := u.Owner < MaxPlayers && u.DefID != DefZombie &&
+				vdef != nil && !vdef.Military()
+			kills = append(kills, kill{
+				killer: attacker,
+				victim: victim,
+				human:  human,
+				x:      u.X,
+				y:      u.Y,
+			})
+		}
 	}
 
 	w.units.Each(func(id entity.ID, u *Unit) {
@@ -207,7 +230,7 @@ func (w *World) combatPhase() {
 				t.State = UnitWander // a struck animal rouses at once
 			}
 			if t.HP <= 0 {
-				markDead(u.AttackTarget)
+				markDead(id, u.AttackTarget)
 				return
 			}
 			// retaliation: defenders that can fight back and are not
@@ -241,7 +264,15 @@ func (w *World) combatPhase() {
 		limit := int64(def.Vision) << 16
 		limit *= limit
 		w.units.Each(func(id entity.ID, o *Unit) {
-			if o.HP <= 0 || o.Owner == u.Owner || o.Owner >= MaxPlayers {
+			if o.HP <= 0 || o.Owner == u.Owner {
+				return
+			}
+			// wild animals stay wild to idle eyes, but night-walking
+			// zombies are hostile to every garrison
+			if o.Owner >= MaxPlayers && !isZombie(o) {
+				return
+			}
+			if w.zombieGhosted(o) {
 				return
 			}
 			if fg.State(int(tileOf(o.X)), int(tileOf(o.Y))) != fog.Visible {
@@ -262,7 +293,25 @@ func (w *World) combatPhase() {
 		}
 	})
 
+	w.towerPhase(markDead)
 	w.processDeaths(dead)
+
+	// infection: every human a zombie kills rises again bound to the
+	// same relic — the horde is made of its victims.
+	for _, k := range kills {
+		if !k.human {
+			continue
+		}
+		killer := w.units.Get(k.killer)
+		if killer == nil || killer.HP <= 0 {
+			continue
+		}
+		kdef := w.udefs.Get(killer.DefID)
+		if kdef == nil || !kdef.Infect {
+			continue
+		}
+		w.spawnZombie(killer.Relic, tileCenter(tileOf(k.x)), tileCenter(tileOf(k.y)))
+	}
 }
 
 // attackBuilding drives one attacker assigned to an enemy building,
@@ -360,4 +409,67 @@ func mix64(z uint64) uint64 {
 	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
 	z = (z ^ (z >> 27)) * 0x94d049bb133111eb
 	return z ^ (z >> 31)
+}
+
+// towerPhase is the watchtower volley: each completed tower shoots the
+// nearest enemy unit in range, oldest-shot-first via its cooldown.
+func (w *World) towerPhase(markDead func(attacker, victim entity.ID)) {
+	w.buildings.Each(func(id entity.ID, b *Building) {
+		def := w.bdefs.Get(b.DefID)
+		if def == nil || !def.IsTower() || b.Owner >= MaxPlayers ||
+			b.Progress < def.BuildTicks {
+			return
+		}
+		if b.TowerCd > 0 {
+			b.TowerCd--
+			return
+		}
+		cx, cy := buildingCenter(b)
+		limit := int64(def.TowerRange) << 16
+		limit *= limit
+		var best entity.ID
+		var bestD2 int64 = -1
+		w.units.Each(func(uid entity.ID, u *Unit) {
+			if u.HP <= 0 || u.Owner == b.Owner || u.Owner == OwnerNeutral {
+				return
+			}
+			d2 := dist2(cx, cy, u.X, u.Y)
+			if d2 > limit {
+				return
+			}
+			if bestD2 < 0 || d2 < bestD2 || (d2 == bestD2 && uid < best) {
+				bestD2, best = d2, uid
+			}
+		})
+		if best == entity.Nil {
+			return
+		}
+		t := w.units.Get(best)
+		dmg := w.towerDamage(def, t)
+		t.HP -= dmg
+		b.TowerCd = def.TowerRate
+		if t.State == UnitSleep {
+			t.State = UnitWander
+		}
+		if t.HP <= 0 {
+			markDead(entity.Nil, best)
+		}
+	})
+}
+
+// towerDamage resolves one tower shot against a unit: towers shoot
+// arrows (pierce), without class bonuses or tech, floored at 1.
+func (w *World) towerDamage(def *building.Def, target *Unit) int32 {
+	armor := int32(0)
+	if tdef := w.udefs.Get(target.DefID); tdef != nil {
+		armor = tdef.ArmorPierce
+		if target.Owner < MaxPlayers {
+			armor += w.players[target.Owner].Mods.ArmorP[tdef.Class]
+		}
+	}
+	dmg := def.TowerDamage - armor
+	if dmg < 1 {
+		dmg = 1
+	}
+	return dmg
 }

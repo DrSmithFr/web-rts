@@ -79,12 +79,12 @@ type Def struct {
 // Mods accumulates the stat effects a player owns. It is derived state:
 // recomputing it from the owned-tech bitset always yields the same values.
 type Mods struct {
-	Dmg     [6]int32
-	ArmorP  [6]int32
-	ArmorC  [6]int32
-	Speed16 [6]int32
-	Carry   [6]int32
-	Range16 [6]int32
+	Dmg     [7]int32
+	ArmorP  [7]int32
+	ArmorC  [7]int32
+	Speed16 [7]int32
+	Carry   [7]int32
+	Range16 [7]int32
 }
 
 // Apply folds one effect into the modifier set.

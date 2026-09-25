@@ -527,7 +527,7 @@ var plans = []plan{
 
 func (b *Brain) buildOrder(v *view) []proto.Order {
 	for _, pl := range plans {
-		if v.era < pl.minEra || !pl.need(v) || !affordable(v, pl.def) || b.hasBuilding(v, pl.def) {
+		if v.era < pl.minEra || !pl.need(v) || !affordable(v, pl.def) {
 			continue
 		}
 		builder, ok := b.pickBuilder(v)
@@ -603,14 +603,19 @@ func (b *Brain) military(v *view) []proto.Order {
 	if bar == 0 {
 		return out
 	}
-	armyCap := int32(2) + int32(b.Diff)
+	armyCap := int32(2) + int32(b.Diff) + b.siegeNeed(v)
 	if int32(len(v.army)) < armyCap && v.pop+1 <= v.cap &&
 		v.res[resource.Food] >= 130 && v.res[resource.Gold] >= 30 {
 		out = append(out, mk(v.p, orders.Train, orders.TrainPayload(uint32(bar), core.DefLancer)))
 	}
 	b.research(v, &out)
-	out = append(out, b.relicRush(v)...)
-	out = append(out, b.waves(v)...)
+	rush := b.relicRush(v)
+	out = append(out, rush...)
+	if len(rush) == 0 {
+		// while soldiers are marching onto or back onto relic tiles,
+		// the probe cycle must not yank them off again
+		out = append(out, b.waves(v)...)
+	}
 	return out
 }
 
@@ -650,7 +655,8 @@ func techReady(pl *core.Player, id uint16, w *core.World) bool {
 
 // waves runs the probe / attack / retreat cycle from relative strength.
 func (b *Brain) waves(v *view) []proto.Order {
-	army := int32(len(v.army))
+	field := freeArmy(v)
+	army := int32(len(field))
 	if b.fleeing > 0 {
 		b.fleeing--
 		if b.fleeing == 0 {
@@ -692,11 +698,66 @@ func (b *Brain) waves(v *view) []proto.Order {
 		cx, cy := b.probeTarget(v)
 		return b.moveArmy(v, cx, cy)
 	}
-	ids := make([]uint32, 0, len(v.army))
-	for _, a := range v.army {
+	ids := make([]uint32, 0, len(field))
+	for _, a := range field {
 		ids = append(ids, uint32(a.id))
 	}
 	return []proto.Order{mk(v.p, orders.Attack, orders.AttackPayload(ids, uint32(target.id), orders.TargetUnit))}
+}
+
+// garrisonOn reports a unit standing guard on a relic tile the brain
+// already owns; relic garrisons must never be undone by wave or probe
+// moves, so every field-army decision skips them.
+func garrisonOn(v *view, u viewUnit) bool {
+	rels := v.w.Relics()
+	for ri := 0; ri < core.RelicCount; ri++ {
+		if rels[ri].Owner == v.p && u.x == rels[ri].X && u.y == rels[ri].Y {
+			return true
+		}
+	}
+	return false
+}
+
+// freeArmy is the field army: everything except relic garrisons.
+func freeArmy(v *view) []viewUnit {
+	out := make([]viewUnit, 0, len(v.army))
+	for _, a := range v.army {
+		if !garrisonOn(v, a) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// siegeNeed is extra military production while relics are contested:
+// the night guardians wipe lone garrisons, so holding relics needs a
+// standing relief army, not just pairs of flag-bearers.
+func (b *Brain) siegeNeed(v *view) int32 {
+	free := int32(len(freeArmy(v)))
+	need := int32(0)
+	for ri := 0; ri < core.RelicCount; ri++ {
+		if relicGarrisoned(v, ri) {
+			continue
+		}
+		need++
+	}
+	if need == 0 {
+		// all garrisons set: keep a reserve marching to the open dens
+		need = 2
+	}
+	if free < need*2 {
+		return need * 2
+	}
+	return 0
+}
+
+func relicGarrisoned(v *view, ri int) bool {
+	for _, a := range v.army {
+		if a.x == v.w.Relics()[ri].X && a.y == v.w.Relics()[ri].Y {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Brain) relicRush(v *view) []proto.Order {
@@ -704,16 +765,69 @@ func (b *Brain) relicRush(v *view) []proto.Order {
 		return nil
 	}
 	rels := v.w.Relics()
+	army := freeArmy(v)
+	// a relic we own whose garrison was knocked off the tile has a
+	// shrinking grace: march the nearest free soldiers straight back
+	for ri := 0; ri < core.RelicCount; ri++ {
+		if rels[ri].Owner != v.p || relicGarrisoned(v, ri) {
+			continue
+		}
+		var items []orders.MoveItem
+		for k := 0; k < 3 && k < len(army); k++ {
+			best, bd := -1, int64(1)<<62
+			for ai := range army {
+				if army[ai].id == 0 {
+					continue
+				}
+				d := dist2(0, 0, army[ai].x-rels[ri].X, army[ai].y-rels[ri].Y)
+				if d < bd {
+					bd, best = d, ai
+				}
+			}
+			if best < 0 {
+				break
+			}
+			items = append(items, orders.MoveItem{ID: uint32(army[best].id),
+				X16: uint16(rels[ri].X*16 + 8), Y16: uint16(rels[ri].Y*16 + 8)})
+			army[best].id = 0
+		}
+		if len(items) > 0 {
+			return []proto.Order{mk(v.p, orders.Move, orders.MovePayload(items))}
+		}
+	}
 	for ri := 0; ri < core.RelicCount; ri++ {
 		// relic positions are public knowledge (drawn on every minimap),
 		// so contesting them needs no fog sight
 		if rels[ri].Owner == v.p {
 			continue
 		}
-		solo := v.army[len(v.army)-1]
-		return []proto.Order{mk(v.p, orders.MoveGroup,
-			orders.MoveGroupPayload([]uint32{uint32(solo.id)},
-				uint16(rels[ri].X*16+8), uint16(rels[ri].Y*16+8)))}
+		// holding is presence now: park a pair of soldiers exactly on
+		// the tile (a lone garrison loses to the night guardians, and
+		// the fallen rise again); plain Move keeps them on the tile,
+		// where a group order would spiral them into surrounding slots
+		var items []orders.MoveItem
+		for k := 0; k < 2; k++ {
+			best, bd := -1, int64(1)<<62
+			for ai := range army {
+				if army[ai].id == 0 {
+					continue
+				}
+				d := dist2(0, 0, army[ai].x-rels[ri].X, army[ai].y-rels[ri].Y)
+				if d < bd {
+					bd, best = d, ai
+				}
+			}
+			if best < 0 {
+				break
+			}
+			items = append(items, orders.MoveItem{ID: uint32(army[best].id),
+				X16: uint16(rels[ri].X*16 + 8), Y16: uint16(rels[ri].Y*16 + 8)})
+			army[best].id = 0
+		}
+		if len(items) == 0 {
+			return nil
+		}
+		return []proto.Order{mk(v.p, orders.Move, orders.MovePayload(items))}
 	}
 	return nil
 }
@@ -749,6 +863,9 @@ func clamp32(x, lo, hi int32) int32 {
 func (b *Brain) moveArmy(v *view, x, y int32) []proto.Order {
 	ids := make([]uint32, 0, len(v.army))
 	for _, a := range v.army {
+		if garrisonOn(v, a) {
+			continue
+		}
 		ids = append(ids, uint32(a.id))
 	}
 	if len(ids) == 0 {

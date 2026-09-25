@@ -5,6 +5,42 @@ merges (`vNN-phase-name`).
 
 ## Unreleased
 
+## [v12-zombie-sieges-fortifications] - 2026-09-25
+
+Phase 12: night zombie sieges over relics, plus fortifications and siege engines.
+
+### Added
+
+- Zombie guardians: relics trickle night-bound guardians from their den
+  while unclaimed (capped per relic, sealed once a player holds it);
+  by day they are ghosts, by night they hunt; every human they kill
+  rises again bound to the same relic.
+- Relic control is presence: standing military refreshes the claim, an
+  abandoned tile drains through a grace period and reverts to neutral,
+  so held relics become nightly siege objectives.
+- Fortifications and siege: wall, watchtower (auto-attacks nearby
+  enemies; shots, cooldown and targets in the world hash) and siege
+  workshop; battering ram and trebuchet with bonus-vs-building data
+  (unit class Siege); tower state hashed (`rts.world/v13`).
+- Client models and names for zombies, siege units, walls, watchtowers
+  and siege workshops.
+- Core tests: watchtower shooting/range/neutral rules, siege demolishes
+  buildings faster than infantry, walls block and absorb (400 hp),
+  siege combat determinism; garrison and relic-drain tests in `progress_test.go`.
+
+### Changed
+
+- Bot doctrine rewritten around the siege loop: garrison-aware army
+  bookkeeping, nearest-unit relic parking and relief marches, siege
+  demand scales the army cap, and relic moves outrank probe moves in
+  the same reaction batch. Build plans are no longer blocked by having
+  any of the same type, so the bot now builds multiple huts/campfires
+  and grows past the old population cap.
+- The server relic-victory test now validates a brain-driven victory
+  through the full room/relay/mirror pipeline; scripted runs no longer
+  survive the presence-based relic rules.
+- `make test` replays re-recorded under the v13 hash.
+
 Phase 10: procedural map generation spec — biomes, tree species, sawmill
 gating and biome-driven agriculture. Simulation-affecting: map format
 `rts.map/v4`, world `rts.world/v7`, replays regenerated.

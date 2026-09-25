@@ -18,6 +18,9 @@ const (
 	ClassArcher   uint8 = 3
 	ClassScout    uint8 = 4
 	ClassAnimal   uint8 = 5
+	ClassSiege    uint8 = 6
+	// BonusBuilding (0) marks a bonus entry as bonus-vs-buildings.
+	BonusBuilding uint8 = 0
 )
 
 // Damage types; armor is chosen by the attack's type.
@@ -73,9 +76,15 @@ type Def struct {
 	// CampfireImmune species ignore the campfire repulse aura.
 	CampfireImmune bool `json:"campfireImmune"`
 	// Prey lists neutral animal def ids a wild attacker hunts.
-	Prey    []uint16 `json:"prey"`
-	MinEra  int32    `json:"minEra"`
-	Bonuses []Bonus  `json:"bonuses"`
+	Prey []uint16 `json:"prey"`
+	// ChaseLost: a wild attacker abandons the chase once the quarry is
+	// this many tiles away (0 = the species never gives up this way).
+	ChaseLost int32 `json:"chaseLost"`
+	// Infect marks the zombie kind: every human it kills rises again as
+	// a zombie linked to the same relic.
+	Infect  bool    `json:"infect"`
+	MinEra  int32   `json:"minEra"`
+	Bonuses []Bonus `json:"bonuses"`
 }
 
 // Attacks reports whether this unit can deal damage at all.
@@ -84,7 +93,7 @@ func (d *Def) Attacks() bool { return d.Damage > 0 }
 // Military reports whether the unit auto-acquires visible enemies while
 // idle (the combat classes).
 func (d *Def) Military() bool {
-	return d.Class == ClassInfantry || d.Class == ClassArcher || d.Class == ClassScout
+	return d.Class == ClassInfantry || d.Class == ClassArcher || d.Class == ClassScout || d.Class == ClassSiege
 }
 
 // Kind returns the render kind for the class.
@@ -151,7 +160,7 @@ func Parse(raw []byte) (*Table, error) {
 			return nil, fmt.Errorf("unit: duplicate id %d", d.ID)
 		case d.Key == "":
 			return nil, fmt.Errorf("unit %d: empty key", d.ID)
-		case d.Class < ClassVillager || d.Class > ClassAnimal:
+		case d.Class < ClassVillager || d.Class > ClassSiege:
 			return nil, fmt.Errorf("unit %s: class out of range", d.Key)
 		case d.HP < 1:
 			return nil, fmt.Errorf("unit %s: hp must be >= 1", d.Key)
@@ -175,7 +184,7 @@ func Parse(raw []byte) (*Table, error) {
 			return nil, fmt.Errorf("unit %s: trainable without a building", d.Key)
 		case d.CorpseFood < 0:
 			return nil, fmt.Errorf("unit %s: negative corpse food", d.Key)
-		case d.FleeRadius < 0 || d.FleeClear < 0 || d.Aggro < 0 || d.Leash < 0:
+		case d.FleeRadius < 0 || d.FleeClear < 0 || d.Aggro < 0 || d.Leash < 0 || d.ChaseLost < 0:
 			return nil, fmt.Errorf("unit %s: negative wild AI radius", d.Key)
 		case d.Flee && d.FleeRadius < 1:
 			return nil, fmt.Errorf("unit %s: flee needs a fleeRadius", d.Key)
@@ -187,9 +196,13 @@ func Parse(raw []byte) (*Table, error) {
 			return nil, fmt.Errorf("unit %s: sleep must be day or night", d.Key)
 		case d.Habitat != "" && d.Habitat != "forest":
 			return nil, fmt.Errorf("unit %s: unknown habitat %q", d.Key, d.Habitat)
+		case d.Infect && d.Sleep != "day":
+			return nil, fmt.Errorf("unit %s: infect species must sleep by day", d.Key)
+		case d.Infect && d.ChaseLost < 1:
+			return nil, fmt.Errorf("unit %s: infect species need a chaseLost radius", d.Key)
 		}
 		for _, b := range d.Bonuses {
-			if b.Class < ClassVillager || b.Class > ClassAnimal {
+			if b.Class > ClassSiege {
 				return nil, fmt.Errorf("unit %s: bonus class out of range", d.Key)
 			}
 			if b.Bonus < 0 || b.Bonus > 100 {

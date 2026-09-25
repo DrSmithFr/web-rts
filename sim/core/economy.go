@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 
+	"rts/sim/building"
 	"rts/sim/entity"
 	"rts/sim/fixed"
 	"rts/sim/orders"
@@ -81,7 +82,7 @@ func (w *World) initEconomy() {
 				b.Owner = uint8(i)
 				b.TileX, b.TileY = tx, ty
 				b.Size = def.Size
-				b.HP = BuildingHP
+				b.HP = buildingHP(def)
 				w.markOccupied(b)
 				w.clearNodesUnder(tx, ty, def.Size)
 				break
@@ -144,6 +145,14 @@ func (w *World) tileWalkable(x, y int32) bool {
 	}
 	t := w.gameMap.Grid().Tile(int(x), int(y))
 	return t != terrain.Shallow && t != terrain.Deep
+}
+
+// buildingHP returns the def HP, falling back to the historical default.
+func buildingHP(def *building.Def) int32 {
+	if def.HP > 0 {
+		return def.HP
+	}
+	return BuildingHP
 }
 
 // tileBlocked reports only building occupancy (units may share ground).
@@ -214,6 +223,7 @@ func (w *World) spawnUnit(owner uint8, defID uint16, x, y fixed.F16) entity.ID {
 	u.Owner = owner
 	u.X, u.Y = x, y
 	u.HomeX, u.HomeY = x, y
+	u.Relic = NoRelic
 	u.HP = def.HP
 	if owner < MaxPlayers {
 		w.players[owner].Pop += def.PopCost
@@ -531,7 +541,7 @@ func (w *World) applyBuild(player uint8, p []byte) bool {
 	b.TileX, b.TileY = tx, ty
 	b.Size = def.Size
 	b.Progress = def.BuildTicks
-	b.HP = BuildingHP
+	b.HP = buildingHP(def)
 	u.State = UnitBuild
 	u.Target = bid
 	return true
@@ -594,6 +604,10 @@ func (w *World) updateUnits() {
 			u.State = UnitWander
 		}
 		if u.Owner == OwnerNeutral && u.Kind == KindAnimal {
+			if def := w.udefs.Get(u.DefID); def != nil && def.Infect {
+				w.zombieStep(id, u)
+				return
+			}
 			w.wildlifeStep(id, u)
 			return
 		}

@@ -376,6 +376,30 @@ func wildDrop(u *Unit) {
 // shield, the habitat band and the spawn leash. It returns false when
 // the animal gave up the chase (state already updated).
 func (w *World) wildChase(u *Unit, def *units.Def, t *Unit) bool {
+	// Zombies hunt by scent, not sense: no leash, no habitat, no fear
+	// of torchlight once their relic is claimed. Only outrunning them
+	// (chaseLost tiles) breaks the trail, and dormant guardians still
+	// won't follow prey into a campfire's glow.
+	if def.Infect {
+		limit := int64(def.ChaseLost) << 16
+		if dist2(u.X, u.Y, t.X, t.Y) > limit*limit {
+			wildDrop(u)
+			u.TX, u.TY = u.HomeX, u.HomeY // shamble back toward the den
+			return false
+		}
+		if !w.relicActivated(u.Relic) {
+			if _, _, ok := w.nearCampfire(u.X, u.Y); ok {
+				wildDrop(u)
+				return false
+			}
+			if _, _, ok := w.nearCampfire(t.X, t.Y); ok {
+				wildDrop(u) // prey sheltered by the campfire: give up
+				return false
+			}
+		}
+		stepToward(&u.X, &u.Y, t.X, t.Y, w.speedOf(u))
+		return true
+	}
 	if !def.CampfireImmune {
 		if _, _, ok := w.nearCampfire(u.X, u.Y); ok {
 			wildDrop(u)

@@ -130,6 +130,50 @@
       "trainTicks": 0,
       "minEra": 0,
       "farmFoodMilli": 20
+    },
+    {
+      "id": 11,
+      "key": "wall",
+      "costWood": 0,
+      "costStone": 25,
+      "buildTicks": 30,
+      "popRoom": 0,
+      "size": 1,
+      "dropoff": false,
+      "trainFood": 0,
+      "trainTicks": 0,
+      "minEra": 1,
+      "hp": 400
+    },
+    {
+      "id": 12,
+      "key": "watchtower",
+      "costWood": 60,
+      "costStone": 40,
+      "buildTicks": 90,
+      "popRoom": 0,
+      "size": 1,
+      "dropoff": false,
+      "trainFood": 0,
+      "trainTicks": 0,
+      "minEra": 1,
+      "hp": 500,
+      "towerDamage": 9,
+      "towerRate": 25,
+      "towerRange": 7
+    },
+    {
+      "id": 13,
+      "key": "siege_workshop",
+      "costWood": 150,
+      "costStone": 60,
+      "buildTicks": 100,
+      "popRoom": 0,
+      "size": 2,
+      "dropoff": false,
+      "trainFood": 0,
+      "trainTicks": 0,
+      "minEra": 2
     }
   ]
 }

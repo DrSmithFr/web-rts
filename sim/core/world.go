@@ -33,7 +33,7 @@ import (
 
 const (
 	// WorldVersion bumps whenever the hash layout changes.
-	WorldVersion uint64 = 10
+	WorldVersion uint64 = 11
 
 	// HashPeriodTicks is how often peers exchange state hashes on the
 	// wire (and how often replays checkpoint).
@@ -42,7 +42,7 @@ const (
 	// MaxPlayers is the fixed player table size.
 	MaxPlayers = 8
 
-	hashLabel = "rts.world/v11"
+	hashLabel = "rts.world/v13"
 )
 
 // World is the full simulation state.
@@ -229,6 +229,7 @@ func (w *World) Step(due []proto.Order) {
 	}
 	w.updateUnits()
 	w.combatPhase()
+	w.zombieTrickle()
 	w.updateBuildings()
 	w.progressPhase()
 	w.updateVision()
@@ -280,6 +281,7 @@ func (w *World) Hash() uint64 {
 		h.WriteU32(uint32(w.relics[i].X))
 		h.WriteU32(uint32(w.relics[i].Y))
 		h.WriteU32(uint32(w.relics[i].Owner))
+		h.WriteU32(uint32(w.relics[i].Hold))
 	}
 	h.WriteU32(uint32(w.winner))
 	h.WriteU32(uint32(w.winnerKind))
@@ -294,6 +296,7 @@ func (w *World) Hash() uint64 {
 		h.WriteU32(uint32(u.Y))
 		h.WriteU32(uint32(u.HomeX))
 		h.WriteU32(uint32(u.HomeY))
+		h.WriteU32(uint32(u.Relic))
 		h.WriteU32(uint32(u.Target))
 		h.WriteU32(uint32(u.AttackTarget))
 		h.WriteU32(uint32(u.AttackKind))
@@ -334,6 +337,7 @@ func (w *World) Hash() uint64 {
 			h.WriteU32(uint32(b.TrainQueue[i]))
 		}
 		h.WriteU64(uint64(int64(b.HP)))
+		h.WriteU64(uint64(int64(b.TowerCd)))
 	})
 	h.Write(w.streams.AppendState(nil))
 	return h.Sum()

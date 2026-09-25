@@ -45,6 +45,9 @@ const (
 	DefBear        uint16 = 11
 	DefWolf        uint16 = 12
 	DefBlackWolf   uint16 = 13
+	DefZombie      uint16 = 14
+	DefRam         uint16 = 15
+	DefTrebuchet   uint16 = 16
 )
 
 // Building def ids fixed by data/buildings.json order.
@@ -59,6 +62,9 @@ const (
 	BldWonder     uint16 = 8
 	BldSawmill    uint16 = 9
 	BldFarm       uint16 = 10
+	BldWall       uint16 = 11
+	BldWatchtower uint16 = 12
+	BldSiegeWs    uint16 = 13
 )
 
 // WinnerKind values for the game-over banner.
@@ -120,6 +126,22 @@ const (
 	PreyGuardRadius int32 = 4
 	PreyEscortMax   int32 = 3
 
+	// ZombieTrickleTicks is the period (ticks) between relic-den spawn
+	// pulses, fired at ZombieTrickleOffset (deep midnight, one pulse a
+	// night) only for UNCLAIMED relics, up to ZombieHordeCap per relic —
+	// slow dread that a determined player can end, not an infinite siege.
+	ZombieTrickleTicks  int32 = 9600
+	ZombieTrickleOffset int32 = 6720
+	ZombieHordeCap      int32 = 1
+
+	// NoRelic marks a unit not bound to any relic.
+	NoRelic uint8 = 255
+
+	// RelicOwnerGrace is how long (ticks) a relic stays claimed after
+	// the owner's garrison stops standing on it — enough to finish a
+	// skirmish or walk a few tiles back, not enough to forget it.
+	RelicOwnerGrace int32 = 4800
+
 	// MaxFields caps concurrent flow fields; the oldest is evicted.
 	MaxFields = 64
 
@@ -173,6 +195,9 @@ type Unit struct {
 	FieldY int32
 	// Cooldown ticks down between weapon strikes.
 	Cooldown int32
+	// Relic is the relic index (0..RelicCount-1) a zombie is bound to,
+	// NoRelic for every other unit.
+	Relic    uint8
 	CarriedK resource.Kind
 	Carried  int32
 	// GatherAcc is the fixed-point remainder of the per-tick chop amount
@@ -213,6 +238,8 @@ type Building struct {
 	// a completed farm, at the biome multiplier of its tile (16.16).
 	FarmAcc int32
 	HP      int32
+	// TowerCd is the shots' remaining cooldown for a completed tower.
+	TowerCd int32
 }
 
 // Player is one player's economy and progress state. Mods is derived
@@ -247,6 +274,11 @@ type Player struct {
 type Relic struct {
 	X, Y  int32
 	Owner uint8
+	// Hold counts down toward neutral while no military of Owner stands
+	// on the tile (refreshed every tick presence shows) — a skirmish
+	// that drags the garrison a few tiles off does not lose the relic,
+	// but abandoning it does.
+	Hold int32
 }
 
 // FogState returns the raw fog state (0 unexplored, 1 explored, 2

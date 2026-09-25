@@ -136,11 +136,14 @@ func (w *World) progressPhase() {
 		}
 	}
 
-	// relic claims: the first military unit standing on the tile wins
+	// relic control is presence, not a flag: standing military refreshes
+	// the claim each tick, and while nobody of the owner stands on the
+	// tile the hold drains — abandon it and it reverts to neutral.
 	for ri := 0; ri < RelicCount; ri++ {
 		rel := &w.relics[ri]
+		claimed := OwnerNeutral
 		w.units.Each(func(_ entity.ID, u *Unit) {
-			if u.Owner >= MaxPlayers || u.HP <= 0 {
+			if claimed != OwnerNeutral || u.Owner >= MaxPlayers || u.HP <= 0 {
 				return
 			}
 			def := w.udefs.Get(u.DefID)
@@ -148,9 +151,18 @@ func (w *World) progressPhase() {
 				return
 			}
 			if tileOf(u.X) == rel.X && tileOf(u.Y) == rel.Y {
-				rel.Owner = u.Owner
+				claimed = u.Owner
 			}
 		})
+		switch {
+		case claimed != OwnerNeutral:
+			rel.Owner, rel.Hold = claimed, RelicOwnerGrace
+		case rel.Owner != OwnerNeutral:
+			rel.Hold--
+			if rel.Hold <= 0 {
+				rel.Owner, rel.Hold = OwnerNeutral, 0
+			}
+		}
 	}
 
 	// per-player victory bookkeeping

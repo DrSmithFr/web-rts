@@ -300,6 +300,50 @@ function wolfOf(hex: number, maneHex: number): UnitModel {
   return { body: body.merge() as THREE.BufferGeometry, insignia: null, anim };
 }
 
+function zombie(): UnitModel {
+  const body = new Builder();
+  body.box(0.24, 0.5, 0.28, 0, 0.5, 0, 0x6e8a5a);
+  body.box(0.18, 0.18, 0.18, 0, 0.82, 0.04, 0x86a06e);
+  body.box(0.07, 0.3, 0.07, -0.19, 0.6, 0.08, 0x6e8a5a, 0.5);
+  body.box(0.07, 0.3, 0.07, 0.19, 0.6, 0.08, 0x6e8a5a, 0.5);
+  const anim: AnimPart[] = [];
+  quadLegs(anim, 0x55693f, 0.08, true, 0.26, 0.07, 0.09);
+  quadLegs(anim, 0x55693f, -0.08, false, 0.26, 0.07, 0.09);
+  return { body: body.merge() as THREE.BufferGeometry, insignia: null, anim };
+}
+
+function ram(): UnitModel {
+  const body = new Builder();
+  body.box(0.7, 0.3, 0.34, 0, 0.24, 0, PALETTE.plank);
+  body.box(0.5, 0.22, 0.3, 0, 0.44, 0, PALETTE.trunk);
+  body.box(0.5, 0.06, 0.06, 0, 0.6, 0, PALETTE.trunk);
+  const anim: AnimPart[] = [];
+  for (const [role, z] of [['legF', 0.22], ['legB', -0.22]] as const) {
+    const wheel = new Builder();
+    for (const x of [-0.24, 0.24]) {
+      wheel.cyl(0.13, 0.13, 0.05, x, 0, 0, PALETTE.trunk, 6);
+    }
+    anim.push({ role, geo: wheel.merge() as THREE.BufferGeometry, pivot: new THREE.Vector3(0, 0.13, z) });
+  }
+  return { body: body.merge() as THREE.BufferGeometry, insignia: null, anim };
+}
+
+function trebuchet(): UnitModel {
+  const body = new Builder();
+  body.box(0.56, 0.08, 0.2, 0, 0.1, 0, PALETTE.trunk, 0.4);
+  body.box(0.56, 0.08, 0.2, 0, 0.1, 0, PALETTE.trunk, -0.4);
+  body.box(0.1, 0.34, 0.1, 0, 0.3, 0, PALETTE.plank);
+  const anim: AnimPart[] = [];
+  const arm = new Builder();
+  arm.box(0.06, 0.6, 0.06, 0, 0.1, 0, PALETTE.trunk);
+  arm.box(0.14, 0.14, 0.14, -0.24, -0.1, 0, PALETTE.stone);
+  anim.push({ role: 'armR', geo: arm.merge() as THREE.BufferGeometry, pivot: new THREE.Vector3(0, 0.48, 0) });
+  const sling = new Builder();
+  sling.box(0.12, 0.06, 0.12, 0, -0.32, 0, PALETTE.leather);
+  anim.push({ role: 'weapon', geo: sling.merge() as THREE.BufferGeometry, pivot: new THREE.Vector3(0, 0.86, 0) });
+  return { body: body.merge() as THREE.BufferGeometry, insignia: null, anim };
+}
+
 const UNIT_MODELS: Record<number, () => UnitModel> = {
   1: villager,
   2: lancer,
@@ -314,6 +358,9 @@ const UNIT_MODELS: Record<number, () => UnitModel> = {
   11: bear,
   12: () => wolfOf(PALETTE.wolf, 0xb9bdc4),
   13: () => wolfOf(PALETTE.blackWolf, 0x1f2126),
+  14: zombie,
+  15: ram,
+  16: trebuchet,
 };
 
 const modelCache = new Map<number, UnitModel>();
@@ -327,7 +374,7 @@ export function unitModel(def: number): UnitModel {
   return m;
 }
 
-export const UNIT_DEFS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+export const UNIT_DEFS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
 // --- buildings ---------------------------------------------------------
 
@@ -430,6 +477,39 @@ function wonder(): BuildingModel {
   return { structure: s.merge() as THREE.BufferGeometry, insignia: ins.merge() };
 }
 
+function wall(): BuildingModel {
+  const s = new Builder();
+  s.box(1.05, 0.12, 1.05, 0, 0.06, 0, PALETTE.stone);
+  s.box(0.8, 0.72, 0.8, 0, 0.42, 0, PALETTE.stone);
+  for (const [x, z] of [[-0.4, -0.4], [0.4, -0.4], [-0.4, 0.4], [0.4, 0.4]]) {
+    s.box(0.22, 0.2, 0.22, x, 0.88, z, PALETTE.stone);
+  }
+  return { structure: s.merge() as THREE.BufferGeometry, insignia: null };
+}
+
+function watchtower(): BuildingModel {
+  const s = new Builder();
+  s.box(0.9, 0.14, 0.9, 0, 0.07, 0, PALETTE.stone);
+  s.box(0.62, 1.1, 0.62, 0, 0.62, 0, PALETTE.stone);
+  s.box(0.86, 0.12, 0.86, 0, 1.22, 0, PALETTE.plank);
+  for (const [x, z] of [[-0.4, -0.4], [0.4, -0.4], [-0.4, 0.4], [0.4, 0.4]]) {
+    s.box(0.16, 0.24, 0.16, x, 1.4, z, PALETTE.stone);
+  }
+  const ins = new Builder();
+  ins.box(0.26, 0.16, 0.03, 0, 0.9, 0.33, 0xffffff);
+  return { structure: s.merge() as THREE.BufferGeometry, insignia: ins.merge() };
+}
+
+function siegeWorkshop(): BuildingModel {
+  const s = new Builder();
+  s.box(1.7, 0.14, 1.7, 0, 0.07, 0, PALETTE.plank);
+  s.box(1.3, 0.55, 1.3, 0, 0.4, 0, PALETTE.trunk);
+  s.cone(1.22, 0.4, 0, 0.86, 0, PALETTE.thatch, 4, 0, Math.PI / 4);
+  s.box(0.14, 0.7, 0.14, 0.7, 0.35, 0.7, PALETTE.trunk, 0.6);
+  s.box(0.2, 0.2, 0.2, -0.6, 0.42, -0.6, PALETTE.stone);
+  return { structure: s.merge() as THREE.BufferGeometry, insignia: null };
+}
+
 const BUILDING_MODELS: Record<string, () => BuildingModel> = {
   hut,
   campfire,
@@ -439,6 +519,9 @@ const BUILDING_MODELS: Record<string, () => BuildingModel> = {
   forge,
   bank,
   wonder,
+  wall,
+  watchtower,
+  siege_workshop: siegeWorkshop,
 };
 
 const buildingCache = new Map<string, BuildingModel>();
