@@ -30,10 +30,13 @@ client/static/sim.wasm: $(wildcard sim/*/*.go) $(wildcard wasm/*.go)
 	node tools/fsutil.mjs mkdir client/static
 	node tools/crossexec.mjs GOOS=js GOARCH=wasm -- $(GO) build -trimpath -o client/static/sim.wasm ./wasm
 
-test: test-sim test-det test-parity test-client test-func test-e2e
+test: test-sim test-behavior test-det test-parity test-client test-func test-e2e
 
 test-sim:
 	$(GO) test ./sim/...
+
+test-behavior:
+	$(GO) test ./sim/... -run Behavior -count=1
 
 test-det: bin/detcheck
 	$(DETCHECK) -verify $(REPLAY)

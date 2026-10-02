@@ -38,7 +38,7 @@ func TestTypeString(t *testing.T) {
 }
 
 func TestGridRoundTrip(t *testing.T) {
-	g := NewGrid(4)
+	g := NewGridSquare(4)
 	if g.Size() != 4 || len(g.Tiles()) != 16 || len(g.Vertices()) != 25 {
 		t.Fatal("bad initial layout")
 	}
@@ -57,7 +57,7 @@ func TestGridRoundTrip(t *testing.T) {
 }
 
 func TestVertexClamp(t *testing.T) {
-	g := NewGrid(2)
+	g := NewGridSquare(2)
 	g.SetVertex(0, 0, MaxHeight+100)
 	if g.Vertex(0, 0) != MaxHeight {
 		t.Errorf("high clamp = %d", g.Vertex(0, 0))
@@ -74,5 +74,35 @@ func TestBoundsPanic(t *testing.T) {
 			t.Fatal("expected panic")
 		}
 	}()
-	NewGrid(2).Tile(-1, 0)
+	NewGridSquare(2).Tile(-1, 0)
+}
+
+func TestGridRect(t *testing.T) {
+	g := NewGrid(5, 3)
+	if g.Width() != 5 || g.Height() != 3 {
+		t.Fatal("bad initial layout")
+	}
+	if len(g.Tiles()) != 15 || len(g.Vertices()) != 24 {
+		t.Fatal("bad storage size")
+	}
+	g.SetTile(4, 2, Forest)
+	if g.Tile(4, 2) != Forest || g.Tiles()[2*5+4] != Forest {
+		t.Fatal("tile round trip failed")
+	}
+	if g.InBounds(5, 0) || g.InBounds(0, 3) {
+		t.Fatal("bounds check failed")
+	}
+	g.SetVertex(5, 3, 7)
+	if g.Vertex(5, 3) != 7 {
+		t.Fatal("vertex round trip failed")
+	}
+}
+
+func TestSizePanicsOnRect(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	NewGrid(4, 3).Size()
 }

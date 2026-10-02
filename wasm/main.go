@@ -15,17 +15,19 @@
 //	tick(id)              -> ticks executed
 //	hashHex(id)           -> current state hash, 16 lowercase hex digits
 //	seed(id)              -> world seed (safe up to 2^53)
-//	mapSize(id)           -> tiles per side
+//	mapSize(id)           -> tiles per row (width)
+//	mapHeight(id)         -> tile rows (height)
 //	mapTiles(id)          -> Uint8Array of tile type bytes, row-major
 //	mapBiomes(id)         -> Uint8Array of biome id bytes, row-major
-//	mapHeights(id)        -> Uint8Array of (size+1)^2 u16 LE vertex heights
+//	mapHeights(id)        -> Uint8Array of (w+1)*(h+1) u16 LE vertex heights
 //	mapHashHex(id)        -> map digest, 16 lowercase hex digits
 //	spawnCount(id)        -> number of spawn points
 //	spawnAt(id, i)        -> packed spawn i as (x << 16) | y
-//	unitsBlob(id)         -> Uint8Array, 24-byte records: id u32, owner u8,
+//	unitsBlob(id)         -> Uint8Array, 28-byte records: id u32, owner u8,
 //	                          kind u8, state u8, carried u8, x16 u16, y16 u16,
 //	                          hp u16, def u16, target u32, carriedAmt u16,
-//	                          pad u16 (LE)
+//	                          heading u16 (degrees clockwise from +Y),
+//	                          cond u8 (sim/core condition bits) (LE)
 //	nodesBlob(id)         -> Uint8Array, 16-byte records: id u32, kind u8,
 //	                          amount u16, x16 u16, y16 u16, tileX u16,
 //	                          tileY u16, tree u8
@@ -45,7 +47,7 @@
 //	                          vision,damage,damageType,armorPierce,
 //	                          armorCrush,range16,rate,costFood,costWood,
 //	                          costGold,popCost,trainBy,trainTicks,
-//	                          corpseFood,flee,minEra,bonuses:[{class,bonus}]}
+//	                          corpseFood,terrorTicks,hunted,minEra,bonuses:[{class,bonus}]}
 //	eras(id)              -> array of era defs {id,key,costFood,costGold,
 //	                          reqBuilding,ageTicks}
 //	techDefs(id)          -> array of tech defs {id,key,era,building,
@@ -233,7 +235,11 @@ func seed(this js.Value, args []js.Value) any {
 }
 
 func mapSize(this js.Value, args []js.Value) any {
-	return float64(mustID(args).world.Map().Grid().Size())
+	return float64(mustID(args).world.Map().Grid().Width())
+}
+
+func mapHeight(this js.Value, args []js.Value) any {
+	return float64(mustID(args).world.Map().Grid().Height())
 }
 
 func mapTiles(this js.Value, args []js.Value) any {
@@ -306,7 +312,7 @@ func blob(n int, fill func(buf []byte)) js.Value {
 
 func unitsBlob(this js.Value, args []js.Value) any {
 	units := mustID(args).world.Units()
-	return blob(units.Len()*24, func(buf []byte) {
+	return blob(units.Len()*28, func(buf []byte) {
 		off := 0
 		units.Each(func(id entity.ID, u *core.Unit) {
 			binary.LittleEndian.PutUint32(buf[off:], uint32(id))
@@ -320,7 +326,9 @@ func unitsBlob(this js.Value, args []js.Value) any {
 			binary.LittleEndian.PutUint16(buf[off+14:], u.DefID)
 			binary.LittleEndian.PutUint32(buf[off+16:], uint32(u.Target))
 			binary.LittleEndian.PutUint16(buf[off+20:], u16v(u.Carried))
-			off += 24
+			binary.LittleEndian.PutUint16(buf[off+22:], uint16(u.Heading))
+			buf[off+24] = u.Cond
+			off += 28
 		})
 	})
 }
@@ -504,7 +512,7 @@ func fogBlob(this js.Value, args []js.Value) any {
 		panic("RTSSim: fogBlob requires (id, player)")
 	}
 	g := w.world.Fog(uint8(args[1].Int()))
-	buf := g.Packed(make([]byte, 0, fog.PackedLen(g.Size())))
+	buf := g.Packed(make([]byte, 0, fog.PackedLen(g.Width(), g.Height())))
 	out := js.Global().Get("Uint8Array").New(len(buf))
 	js.CopyBytesToJS(out, buf)
 	return out
@@ -554,7 +562,8 @@ func unitDefs(this js.Value, args []js.Value) any {
 		o.Set("trainBy", d.TrainBy)
 		o.Set("trainTicks", d.TrainTicks)
 		o.Set("corpseFood", d.CorpseFood)
-		o.Set("flee", d.Flee)
+		o.Set("terrorTicks", d.TerrorTicks)
+		o.Set("hunted", d.Hunted)
 		o.Set("minEra", d.MinEra)
 		bonuses := js.Global().Get("Array").New()
 		for _, b := range d.Bonuses {
@@ -581,6 +590,7 @@ func main() {
 	obj.Set("hashHex", js.FuncOf(hashHex))
 	obj.Set("seed", js.FuncOf(seed))
 	obj.Set("mapSize", js.FuncOf(mapSize))
+	obj.Set("mapHeight", js.FuncOf(mapHeight))
 	obj.Set("mapTiles", js.FuncOf(mapTiles))
 	obj.Set("mapBiomes", js.FuncOf(mapBiomes))
 	obj.Set("mapHeights", js.FuncOf(mapHeights))

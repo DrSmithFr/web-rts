@@ -268,7 +268,7 @@ try {
     renderer,
   );
   const blockedTiles = new Set<number>(world.nodes().map((n) => n.tileY * size + n.tileX));
-  const ground = new GroundChunks(size, tiles, heights, blockedTiles, biomes);
+  const ground = new GroundChunks(size, size, tiles, heights, blockedTiles, biomes);
   scene.add(ground.group);
   scene.add(buildMapObjects(size, heights, world.spawns()).group);
 
@@ -1270,22 +1270,6 @@ try {
     }
   }
 
-  function resolveTarget(id: number): { x: number; y: number } | null {
-    for (const u of units) {
-      if (u.id === id) return { x: u.x, y: u.y };
-    }
-    for (const b of buildings) {
-      if (b.id === id) {
-        const d = defById.get(b.def);
-        const s = d ? d.size : 1;
-        return { x: b.tileX + s / 2, y: b.tileY + s / 2 };
-      }
-    }
-    const n = nodeById.get(id);
-    if (n) return { x: n.x, y: n.y };
-    return null;
-  }
-
   // ?turbo=N runs N sim ticks per loop iteration (solo only); used by
   // E2E to fast-forward long deterministic games in real time.
   const turbo = session ? 1 : Math.min(50, Math.max(1, Number(params.get('turbo') ?? 1)));
@@ -1325,11 +1309,13 @@ try {
           cls: def?.class ?? 1,
           state: u.state,
           target: u.target,
+          heading: u.heading,
+          cond: u.cond,
           color,
           hpFrac,
         });
       }
-      actors.setUnits(renderUnits, now, resolveTarget);
+      actors.setUnits(renderUnits, now);
       buildings = world.buildings().filter(
         (b) => b.owner === LOCAL_PLAYER || fogView.visible(b.tileX, b.tileY),
       );

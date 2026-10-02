@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@ast-grep/cli": "^0.45.3"
+  },
+  "allowScripts": {
+    "@ast-grep/cli@0.45.3": true
+  }
+}

@@ -96,7 +96,7 @@ const (
 	// not a siege of a den.
 	RelicClear = 40
 
-	hashLabel = "rts.map/v6"
+	hashLabel = "rts.map/v7"
 )
 
 // ErrNoSpawns means the map does not contain enough separated land patches
@@ -190,7 +190,7 @@ func CustomWithBiomes(grid *terrain.Grid, spawns [][2]int, nodes []Node, animals
 	m := &Map{grid: grid, spawns: spawns, nodes: nodes, animals: animals}
 	m.biomes = biomes
 	if m.biomes == nil {
-		m.biomes = make([]uint8, grid.Size()*grid.Size())
+		m.biomes = make([]uint8, grid.Width()*grid.Height())
 	}
 	m.relics = placeRelics(grid)
 	m.digest = hashMap(m)
@@ -210,6 +210,33 @@ func CustomWithRelics(grid *terrain.Grid, spawns [][2]int, nodes []Node, animals
 	return m
 }
 
+// FromLayers assembles a Map from fully decoded layers (custom map
+// files). A nil biome layer means all-temperate. A nil relic slice runs
+// the automatic placement; otherwise the slice fills the relic slots in
+// order and the rest are absent, marked by the [-1, -1] tile that no
+// unit can ever stand on.
+func FromLayers(grid *terrain.Grid, biomes []uint8, spawns [][2]int, nodes []Node, animals []Animal, relics [][2]int32) *Map {
+	m := &Map{grid: grid, spawns: spawns, nodes: nodes, animals: animals, biomes: biomes}
+	if m.biomes == nil {
+		m.biomes = make([]uint8, grid.Width()*grid.Height())
+	}
+	if relics == nil {
+		m.relics = placeRelics(grid)
+	} else {
+		for i := range m.relics {
+			m.relics[i] = [2]int32{-1, -1}
+		}
+		for i, r := range relics {
+			if i >= RelicCount {
+				break
+			}
+			m.relics[i] = r
+		}
+	}
+	m.digest = hashMap(m)
+	return m
+}
+
 // Generate builds a map for the given seed, size (tiles per side) and
 // player count.
 func Generate(seed uint64, size, players int) (*Map, error) {
@@ -218,7 +245,7 @@ func Generate(seed uint64, size, players int) (*Map, error) {
 	}
 	bdefs := biome.MustLoad()
 	tdefs := tree.MustLoad()
-	g := terrain.NewGrid(size)
+	g := terrain.NewGridSquare(size)
 
 	for y := int64(0); y <= int64(size); y++ {
 		for x := int64(0); x <= int64(size); x++ {
@@ -395,8 +422,7 @@ func distanceToWater(g *terrain.Grid) []int {
 // placeRelics puts the five victory relics in a diamond around the map
 // center, each snapped to the nearest walkable open ground.
 func placeRelics(g *terrain.Grid) [RelicCount][2]int32 {
-	size := g.Size()
-	cx, cy := size/2, size/2
+	cx, cy := g.Width()/2, g.Height()/2
 	seeds := [RelicCount][2]int32{{0, 0}, {4, 0}, {-4, 0}, {0, 4}, {0, -4}}
 	var out [RelicCount][2]int32
 	for i, s := range seeds {
@@ -412,7 +438,7 @@ func snapWalkable(g *terrain.Grid, x, y int) (int, int) {
 	if g.InBounds(x, y) && g.Tile(x, y).Walkable() {
 		return x, y
 	}
-	for r := 1; r < g.Size(); r++ {
+	for r := 1; r < g.Width()+g.Height(); r++ {
 		for dy := -r; dy <= r; dy++ {
 			for dx := -r; dx <= r; dx++ {
 				if dx != -r && dx != r && dy != -r && dy != r {
@@ -1005,8 +1031,8 @@ func iabs(v int) int {
 func hashMap(m *Map) uint64 {
 	h := hash.New()
 	h.WriteString(hashLabel)
-	size := m.grid.Size()
-	h.WriteU32(uint32(size))
+	h.WriteU32(uint32(m.grid.Width()))
+	h.WriteU32(uint32(m.grid.Height()))
 	h.WriteU32(uint32(len(m.spawns)))
 	for _, s := range m.spawns {
 		h.WriteU32(uint32(s[0]))

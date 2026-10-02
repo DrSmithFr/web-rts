@@ -42,10 +42,29 @@ func interval(d Difficulty) uint32 {
 // Brain is one bot player's state machine: economy balancing, an era
 // build order, tech research, military production and a probe / wave /
 // retreat cycle.
+// Module is one brain behavior group; Brain.Step only runs the modules
+// the brain has enabled.
+type Module uint16
+
+const (
+	ModEconomy Module = 1 << iota
+	ModBuild
+	ModAgeUp
+	ModMilitary
+	ModResearch
+	ModWaves
+	ModRelics
+	ModExplore
+
+	ModAll = ModEconomy | ModBuild | ModAgeUp | ModMilitary |
+		ModResearch | ModWaves | ModRelics | ModExplore
+)
+
 type Brain struct {
 	Player uint8
 	Diff   Difficulty
 
+	mods       Module
 	since      uint32
 	builderOff int
 	scoutOff   int
@@ -61,9 +80,16 @@ type Brain struct {
 	fleeing    uint32
 }
 
-// New creates a bot brain for a player slot.
+// New creates a bot brain for a player slot, all modules on.
 func New(player uint8, d Difficulty) *Brain {
-	return &Brain{Player: player, Diff: d, scoutOff: 1}
+	return &Brain{Player: player, Diff: d, mods: ModAll, scoutOff: 1}
+}
+
+// Only restricts the brain to the given modules and returns it. Setup
+// and tests only; never driven by orders.
+func (b *Brain) Only(m Module) *Brain {
+	b.mods = m
+	return b
 }
 
 type viewUnit struct {
@@ -90,7 +116,7 @@ type view struct {
 	seenEnemy []viewUnit
 	prey      []viewUnit
 	seenK     [4]bool
-	size      int32
+	mw, mh    int32
 	fog       *fog.Grid
 }
 
@@ -103,7 +129,7 @@ func (v *view) seen(tx, ty int32) bool {
 }
 
 func scan(w *core.World, p uint8) *view {
-	v := &view{w: w, p: p, fog: w.Fog(p), size: int32(w.Map().Grid().Size())}
+	v := &view{w: w, p: p, fog: w.Fog(p), mw: int32(w.Map().Grid().Width()), mh: int32(w.Map().Grid().Height())}
 	pl := &w.Players()[p]
 	v.pop, v.cap = pl.Pop, w.PopCap(p)
 	v.res = pl.Res
@@ -178,6 +204,9 @@ func (v *view) nearestNode(x, y int32, kind resource.Kind) entity.ID {
 		if n.Kind != kind || n.Amount <= 0 || !v.seen(n.TileX, n.TileY) {
 			return
 		}
+		if !v.w.Reachable(x, y, n.TileX, n.TileY) {
+			return // across the water: no villager would ever arrive
+		}
 		if d := v.w.TreeDefs().Get(n.Tree); d != nil && d.Sawmill && v.myBuild[core.BldSawmill] == 0 {
 			return
 		}
@@ -204,11 +233,21 @@ func (b *Brain) Step(w *core.World, tick uint32) []proto.Order {
 		b.preySeen = w.Tick()
 	}
 	var out []proto.Order
-	out = append(out, b.ageUp(v)...)
-	out = append(out, b.economy(v)...)
-	out = append(out, b.explore(v)...)
-	out = append(out, b.buildOrder(v)...)
-	out = append(out, b.military(v)...)
+	if b.mods&ModAgeUp != 0 {
+		out = append(out, b.ageUp(v)...)
+	}
+	if b.mods&ModEconomy != 0 {
+		out = append(out, b.economy(v)...)
+	}
+	if b.mods&ModExplore != 0 {
+		out = append(out, b.explore(v)...)
+	}
+	if b.mods&ModBuild != 0 {
+		out = append(out, b.buildOrder(v)...)
+	}
+	if b.mods&(ModMilitary|ModResearch|ModRelics|ModWaves) != 0 {
+		out = append(out, b.military(v)...)
+	}
 	return out
 }
 
@@ -250,6 +289,9 @@ func (b *Brain) nearestPrey(v *view, x, y int32) entity.ID {
 	for _, pr := range v.prey {
 		w := v.w.Units().Get(pr.id)
 		if w == nil || w.HP <= 0 {
+			continue
+		}
+		if !v.w.Reachable(x, y, pr.x, pr.y) {
 			continue
 		}
 		d := dist2(x, y, pr.x, pr.y)
@@ -353,8 +395,8 @@ func (b *Brain) economy(v *view) []proto.Order {
 		b.scoutOff++
 		bx, by := bearingTo(cx-ux, cy-uy)
 		wob := scoutDirs[(uint32(b.scoutOff)+uint32(i)*3)%8]
-		tx := clamp32(ux+bx*12+wob[1]*6, 1, v.size-2)
-		ty := clamp32(uy+by*12+wob[0]*6, 1, v.size-2)
+		tx := clamp32(ux+bx*12+wob[1]*6, 1, v.mw-2)
+		ty := clamp32(uy+by*12+wob[0]*6, 1, v.mh-2)
 		out = append(out, mk(v.p, orders.MoveGroup,
 			orders.MoveGroupPayload([]uint32{uint32(e)},
 				uint16(tx*16+8), uint16(ty*16+8))))
@@ -417,10 +459,10 @@ func (b *Brain) economy(v *view) []proto.Order {
 				}
 				px, py := b.preyX, b.preyY
 				if b.preySeen == 0 || w2tick(v.w)-b.preySeen > 3000 {
-					px, py = v.size/2, v.size/2
+					px, py = v.mw/2, v.mh/2
 				}
-				tx := clamp32(px+int32(drifters%3)*2-2, 1, v.size-2)
-				ty := clamp32(py+int32((drifters/3)%3)*2-2, 1, v.size-2)
+				tx := clamp32(px+int32(drifters%3)*2-2, 1, v.mw-2)
+				ty := clamp32(py+int32((drifters/3)%3)*2-2, 1, v.mh-2)
 				hunting[vid] = true
 				out = append(out, mk(v.p, orders.MoveGroup,
 					orders.MoveGroupPayload([]uint32{uint32(vid)},
@@ -459,8 +501,8 @@ func (b *Brain) economy(v *view) []proto.Order {
 			bx, by := bearingTo(cx-ux, cy-uy)
 			wob := scoutDirs[(phaseSeek(vid)+uint32(b.scoutOff))%8]
 			hop := int32(14)
-			tx := clamp32(ux+bx*hop-wob[1]*5, 1, v.size-2)
-			ty := clamp32(uy+by*hop+wob[0]*5, 1, v.size-2)
+			tx := clamp32(ux+bx*hop-wob[1]*5, 1, v.mw-2)
+			ty := clamp32(uy+by*hop+wob[0]*5, 1, v.mh-2)
 			out = append(out, mk(v.p, orders.MoveGroup,
 				orders.MoveGroupPayload([]uint32{uint32(vid)},
 					uint16(tx*16+8), uint16(ty*16+8))))
@@ -530,6 +572,16 @@ func (b *Brain) buildOrder(v *view) []proto.Order {
 		if v.era < pl.minEra || !pl.need(v) || !affordable(v, pl.def) {
 			continue
 		}
+		// A foundation of this def is already standing unfinished: send
+		// a worker back to it rather than pay for a second one next door.
+		if site := v.unfinished(pl.def); site != entity.Nil {
+			builder, ok := b.pickBuilder(v)
+			if !ok {
+				continue
+			}
+			return []proto.Order{mk(v.p, orders.Repair,
+				orders.RepairPayload([]uint32{uint32(builder)}, uint32(site)))}
+		}
 		builder, ok := b.pickBuilder(v)
 		if !ok {
 			continue
@@ -542,7 +594,7 @@ func (b *Brain) buildOrder(v *view) []proto.Order {
 		spot := buildSpots[b.builderOff%len(buildSpots)]
 		b.builderOff++
 		tx, ty := bx+spot[0], by+spot[1]
-		if tx < 1 || ty < 1 || tx >= v.size-1 || ty >= v.size-1 {
+		if tx < 1 || ty < 1 || tx >= v.mw-1 || ty >= v.mh-1 {
 			continue
 		}
 		return []proto.Order{mk(v.p, orders.Build, orders.BuildPayload(uint32(builder), pl.def,
@@ -565,10 +617,26 @@ func (b *Brain) pickBuilder(v *view) (entity.ID, bool) {
 	for _, id := range v.idleVill {
 		return id, true
 	}
-	if len(v.villagers) > 4 {
-		return v.villagers[len(v.villagers)-1].id, true
+	// Pulling a worker off another foundation would leave that one
+	// half-built forever, so only gatherers and walkers get reassigned.
+	for _, vu := range v.villagers {
+		if u := v.w.Units().Get(vu.id); u != nil && u.State != core.UnitBuild {
+			return vu.id, true
+		}
 	}
 	return 0, false
+}
+
+// unfinished returns one of the player's still-unfinished buildings of
+// def, or entity.Nil when none is up.
+func (v *view) unfinished(def uint16) entity.ID {
+	var id entity.ID
+	v.w.Buildings().Each(func(eid entity.ID, bl *core.Building) {
+		if id == entity.Nil && bl.Owner == v.p && bl.DefID == def && bl.Progress > 0 {
+			id = eid
+		}
+	})
+	return id
 }
 
 func affordable(v *view, def uint16) bool {
@@ -603,15 +671,22 @@ func (b *Brain) military(v *view) []proto.Order {
 	if bar == 0 {
 		return out
 	}
-	armyCap := int32(2) + int32(b.Diff) + b.siegeNeed(v)
-	if int32(len(v.army)) < armyCap && v.pop+1 <= v.cap &&
-		v.res[resource.Food] >= 130 && v.res[resource.Gold] >= 30 {
-		out = append(out, mk(v.p, orders.Train, orders.TrainPayload(uint32(bar), core.DefLancer)))
+	if b.mods&ModMilitary != 0 {
+		armyCap := int32(2) + int32(b.Diff) + b.siegeNeed(v)
+		if int32(len(v.army)) < armyCap && v.pop+1 <= v.cap &&
+			v.res[resource.Food] >= 130 && v.res[resource.Gold] >= 30 {
+			out = append(out, mk(v.p, orders.Train, orders.TrainPayload(uint32(bar), core.DefLancer)))
+		}
 	}
-	b.research(v, &out)
-	rush := b.relicRush(v)
-	out = append(out, rush...)
-	if len(rush) == 0 {
+	if b.mods&ModResearch != 0 {
+		b.research(v, &out)
+	}
+	var rush []proto.Order
+	if b.mods&ModRelics != 0 {
+		rush = b.relicRush(v)
+		out = append(out, rush...)
+	}
+	if len(rush) == 0 && b.mods&ModWaves != 0 {
 		// while soldiers are marching onto or back onto relic tiles,
 		// the probe cycle must not yank them off again
 		out = append(out, b.waves(v)...)
@@ -836,17 +911,17 @@ func (b *Brain) homeTile(v *view) [2]int32 {
 	if v.myBuild[core.BldStorehouse] > 0 {
 		return v.buildTile[core.BldStorehouse]
 	}
-	return [2]int32{int32(v.size / 2), int32(v.size / 2)}
+	return [2]int32{int32(v.mw / 2), int32(v.mh / 2)}
 }
 
 func (b *Brain) probeTarget(v *view) (int32, int32) {
 	home := b.homeTile(v)
-	size := v.size
+	mw, mh := v.mw, v.mh
 	b.scoutOff++
-	dx, dy := size/2-home[0], size/2-home[1]
+	dx, dy := mw/2-home[0], mh/2-home[1]
 	step := int32(b.scoutOff)
-	cx := clamp32(home[0]+dx/8+step%8, 1, size-2)
-	cy := clamp32(home[1]+dy/8+step%7, 1, size-2)
+	cx := clamp32(home[0]+dx/8+step%8, 1, mw-2)
+	cy := clamp32(home[1]+dy/8+step%7, 1, mh-2)
 	return cx, cy
 }
 
@@ -906,7 +981,7 @@ func (b *Brain) explore(v *view) []proto.Order {
 		}
 	}
 	home := b.homeTile(v)
-	size := v.size
+	mw, mh := v.mw, v.mh
 	cx, cy := b.mapBias(v, home)
 	for i := range b.explorers {
 		e := b.explorers[i]
@@ -936,8 +1011,8 @@ func (b *Brain) explore(v *view) []proto.Order {
 		wob := scoutDirs[phase%8]
 		hop := int32(10) + int32(phase%3)*4
 		perp := int32(stuck) * 8
-		tx := clamp32(ux+bx*hop-wob[1]*perp, 1, size-2)
-		ty := clamp32(uy+by*hop+wob[0]*perp, 1, size-2)
+		tx := clamp32(ux+bx*hop-wob[1]*perp, 1, mw-2)
+		ty := clamp32(uy+by*hop+wob[0]*perp, 1, mh-2)
 		out = append(out, mk(v.p, orders.MoveGroup,
 			orders.MoveGroupPayload([]uint32{uint32(e)},
 				uint16(tx*16+8), uint16(ty*16+8))))
@@ -948,8 +1023,8 @@ func (b *Brain) explore(v *view) []proto.Order {
 // mapBias returns the middle of the map: map size is known at placement
 // time, so contesting mid needs no fog sight.
 func (b *Brain) mapBias(v *view, home [2]int32) (int32, int32) {
-	size := int32(v.w.Map().Grid().Size())
-	return size / 2, size / 2
+	mw, mh := int32(v.w.Map().Grid().Width()), int32(v.w.Map().Grid().Height())
+	return mw / 2, mh / 2
 }
 
 func (b *Brain) isWoodSeeker(vid entity.ID) bool {

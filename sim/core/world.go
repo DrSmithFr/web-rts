@@ -33,7 +33,7 @@ import (
 
 const (
 	// WorldVersion bumps whenever the hash layout changes.
-	WorldVersion uint64 = 11
+	WorldVersion uint64 = 15
 
 	// HashPeriodTicks is how often peers exchange state hashes on the
 	// wire (and how often replays checkpoint).
@@ -42,7 +42,7 @@ const (
 	// MaxPlayers is the fixed player table size.
 	MaxPlayers = 8
 
-	hashLabel = "rts.world/v13"
+	hashLabel = "rts.world/v21"
 )
 
 // World is the full simulation state.
@@ -69,6 +69,7 @@ type World struct {
 	buildings  *entity.Store[Building]
 	fields     *entity.Store[path.Field]
 	occupied   []bool
+	regions    []uint16
 	fogs       [MaxPlayers]*fog.Grid
 }
 
@@ -95,7 +96,13 @@ func NewWorldWithMap(seed uint64, m *worldgen.Map) *World {
 }
 
 func newWorld(seed uint64, m *worldgen.Map) *World {
-	size := m.Grid().Size()
+	return newWorldEconomy(seed, m, true)
+}
+
+// newWorldEconomy builds the world; economy=false skips initEconomy so
+// scenario setup can place players, buildings and units by hand.
+func newWorldEconomy(seed uint64, m *worldgen.Map, economy bool) *World {
+	width, height := m.Grid().Width(), m.Grid().Height()
 	w := &World{
 		seed:      seed,
 		gameMap:   m,
@@ -111,7 +118,7 @@ func newWorld(seed uint64, m *worldgen.Map) *World {
 		nodes:     entity.New[Node](),
 		buildings: entity.New[Building](),
 		fields:    entity.New[path.Field](),
-		occupied:  make([]bool, size*size),
+		occupied:  make([]bool, width*height),
 	}
 	for i := 1; i < tree.Count; i++ {
 		w.treeStep[i] = int32((int64(resource.GatherRate) << 16) * int64(w.species.Get(uint8(i)).GatherMul) / 1000)
@@ -121,9 +128,12 @@ func newWorld(seed uint64, m *worldgen.Map) *World {
 		w.relics[i] = Relic{X: mr[i][0], Y: mr[i][1], Owner: OwnerNeutral}
 	}
 	for i := 0; i < MaxPlayers; i++ {
-		w.fogs[i] = fog.New(size)
+		w.fogs[i] = fog.New(width, height)
 	}
-	w.initEconomy()
+	if economy {
+		w.initEconomy()
+	}
+	w.buildRegions()
 	w.updateVision()
 	return w
 }
@@ -292,6 +302,10 @@ func (w *World) Hash() uint64 {
 		h.WriteU32(uint32(u.DefID))
 		h.WriteU32(uint32(u.Owner))
 		h.WriteU32(uint32(u.State))
+		h.WriteU32(uint32(u.Heading))
+		h.WriteU32(uint32(u.Hunger))
+		h.WriteU32(uint32(u.Cond))
+		h.WriteU32(uint32(u.CondTicks))
 		h.WriteU32(uint32(u.X))
 		h.WriteU32(uint32(u.Y))
 		h.WriteU32(uint32(u.HomeX))
@@ -355,10 +369,10 @@ func (w *World) DebugSpawnUnits(owner uint8, defID uint16, count int) {
 	if int(owner) >= len(spawns) && len(spawns) == 0 {
 		return
 	}
-	size := int32(w.gameMap.Grid().Size())
+	width, height := int32(w.gameMap.Grid().Width()), int32(w.gameMap.Grid().Height())
 	placed := 0
-	for y := int32(0); y < size && placed < count; y++ {
-		for x := int32(0); x < size && placed < count; x++ {
+	for y := int32(0); y < height && placed < count; y++ {
+		for x := int32(0); x < width && placed < count; x++ {
 			if !w.tileWalkable(x, y) {
 				continue
 			}

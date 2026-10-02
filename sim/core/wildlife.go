@@ -25,11 +25,11 @@ func (w *World) wildSleep(def *units.Def) bool {
 	return false
 }
 
-// wildDetect is the species detection radius: the larger of the flee
-// panic and the aggro charge radius. While sleeping, wake-up only
+// wildDetect is the species detection radius: the larger of its own
+// sight and the aggro charge radius. While sleeping, wake-up only
 // registers at SleepWake tiles closer (minus SleepWake, floor 1).
 func wildDetect(def *units.Def) int32 {
-	r := def.FleeRadius
+	r := def.Vision
 	if def.Aggro > r {
 		r = def.Aggro
 	}
@@ -94,12 +94,12 @@ func (w *World) wanderTileOK(u *Unit, def *units.Def, tx, ty int32) bool {
 	if !w.wildTileOK(def, tx, ty) || !leashTile(u, def, tx, ty) {
 		return false
 	}
-	if def.Aggro > 0 && w.nearSettlement(tileCenter(tx), tileCenter(ty), settlementFear) {
+	if !bold(u, def) && def.Aggro > 0 && w.nearSettlement(tileCenter(tx), tileCenter(ty), settlementFear) {
 		return false // wolves bed down away from torchlight
 	}
-	if !def.CampfireImmune {
+	if !def.CampfireImmune && !bold(u, def) {
 		if _, _, ok := w.nearCampfire(tileCenter(tx), tileCenter(ty)); ok {
-			return false
+			return false // shy animals bed down away from the fire
 		}
 	}
 	return true
@@ -125,8 +125,11 @@ func (w *World) nearestThreatID(u *Unit, def *units.Def, radius int32) entity.ID
 		if o.Owner == OwnerNeutral || o.Owner == u.Owner || o.HP <= 0 {
 			return
 		}
-		if o.Owner < MaxPlayers && len(def.Prey) > 0 && w.guardsNear(id, o) >= int(PreyEscortMax) {
+		if o.Owner < MaxPlayers && def.Predator() && w.guardsNear(id, o) >= int(PreyEscortMax) {
 			return
+		}
+		if !w.inSight(u, radius, o.X, o.Y) {
+			return // the threat is out of sight
 		}
 		d2 := dist2(u.X, u.Y, o.X, o.Y)
 		if d2 <= bestD2 {
@@ -141,8 +144,8 @@ func (w *World) nearestThreatID(u *Unit, def *units.Def, radius int32) entity.ID
 // wildWoken reports whether a sleeping animal rouses: a player unit
 // within the reduced wake radius, or (shy species) any campfire aura.
 func (w *World) wildWoken(u *Unit, def *units.Def) bool {
-	if w.nearestThreat(u, wakeRadius(def)) != nil {
-		return true
+	if w.nearestRouse(u, wakeRadius(def)) != nil {
+		return true // something walked up to it
 	}
 	if !def.CampfireImmune {
 		if _, _, ok := w.nearCampfire(u.X, u.Y); ok {
@@ -194,11 +197,8 @@ func (w *World) wildlifeStep(id entity.ID, u *Unit) {
 				return
 			}
 		}
-		if def.Flee {
-			if t := w.nearestThreat(u, def.FleeClear); t != nil {
-				w.fleeFrom(u, def, t.X, t.Y)
-				return
-			}
+		if w.panicStep(u, def) {
+			return // still scared: keep running
 		}
 		u.State = UnitWander
 		return
@@ -217,12 +217,11 @@ func (w *World) wildlifeStep(id entity.ID, u *Unit) {
 			return
 		}
 	}
-	if def.Flee {
-		if t := w.nearestThreat(u, def.FleeRadius); t != nil {
-			u.State = UnitFlee
-			w.fleeFrom(u, def, t.X, t.Y)
-			return
-		}
+	if t := w.threatSeen(u, def); t != nil {
+		u.Cond |= CondFear
+		u.State = UnitFlee
+		w.fleeFrom(u, def, t.X, t.Y)
+		return
 	}
 	if def.Aggro > 0 {
 		var t entity.ID
@@ -253,7 +252,7 @@ func (w *World) wildlifeStep(id entity.ID, u *Unit) {
 	if near(u.X, u.Y, u.TX, u.TY, 2048) {
 		return
 	}
-	stepToward(&u.X, &u.Y, u.TX, u.TY, w.speedOf(u))
+	w.stepToward(u, u.TX, u.TY, w.speedOf(u))
 }
 
 // fleeFrom runs away from a threat point (unit position or campfire).
@@ -264,23 +263,36 @@ func (w *World) fleeFrom(u *Unit, def *units.Def, fx, fy fixed.F16) {
 	tx, ty := tileOf(ax), tileOf(ay)
 	switch {
 	case w.wildTileOK(def, tx, ty):
-		stepToward(&u.X, &u.Y, ax, ay, w.speedOf(u))
+		w.stepToward(u, ax, ay, w.speedOf(u))
 	case w.wildTileOK(def, tx, tileOf(u.Y)):
-		stepToward(&u.X, &u.Y, ax, u.Y, w.speedOf(u))
+		w.stepToward(u, ax, u.Y, w.speedOf(u))
 	case w.wildTileOK(def, tileOf(u.X), ty):
-		stepToward(&u.X, &u.Y, u.X, ay, w.speedOf(u))
+		w.stepToward(u, u.X, ay, w.speedOf(u))
 	case w.tileWalkable(tx, ty):
-		stepToward(&u.X, &u.Y, ax, ay, w.speedOf(u))
+		w.stepToward(u, ax, ay, w.speedOf(u))
 	case w.tileWalkable(tx, tileOf(u.Y)):
-		stepToward(&u.X, &u.Y, ax, u.Y, w.speedOf(u))
+		w.stepToward(u, ax, u.Y, w.speedOf(u))
 	case w.tileWalkable(tileOf(u.X), ty):
-		stepToward(&u.X, &u.Y, u.X, ay, w.speedOf(u))
+		w.stepToward(u, u.X, ay, w.speedOf(u))
 	}
 }
 
-// isPrey reports whether def lists the animal defID as huntable game.
-func isPrey(def *units.Def, defID uint16) bool {
-	for _, p := range def.Prey {
+// isPrey reports whether the hunter def takes the animal defID as food
+// at its current food level: preferred species always, opportunistic
+// species only once the fallback hunger threshold is crossed.
+func isPrey(def *units.Def, defID uint16, hunger int32) bool {
+	for _, p := range def.PreyPreferred {
+		if p == defID {
+			return true
+		}
+	}
+	if def.PreyFallbackAt < 1 {
+		return false
+	}
+	if hunger > HungerFull*def.PreyFallbackAt/100 {
+		return false // not hungry enough to bother
+	}
+	for _, p := range def.PreyFallback {
 		if p == defID {
 			return true
 		}
@@ -328,12 +340,22 @@ func (w *World) nearSettlement(x, y fixed.F16, radius int32) bool {
 }
 
 // wildAcquire picks the nearest target for an aggressive wild animal:
-// player units always, neutral game only when listed in def.Prey.
-// Predators (prey list set) skip escorted humans — a pack does not
-// charge a formation.
+// people of any banner always, neutral game only when it stands on the
+// menu (see isPrey). Preferred species are looked for first, so a hungry
+// wolf with a deer and a sheep in sight still goes for the deer.
+// Predators skip escorted humans: a pack does not charge a formation.
 func (w *World) wildAcquire(uid entity.ID, u *Unit, def *units.Def) entity.ID {
-	lim := int64(def.Aggro) << 16
-	limit := lim * lim
+	if t := w.acquireNear(uid, u, def, true); t != entity.Nil {
+		return t
+	}
+	return w.acquireNear(uid, u, def, false)
+}
+
+// acquireNear is one sweep of the unit store. preferred=true restricts it
+// to the preferred species (people stay eligible either way);
+// preferred=false adds the fallback list, which is already hunger-gated
+// in isPrey.
+func (w *World) acquireNear(uid entity.ID, u *Unit, def *units.Def, preferred bool) entity.ID {
 	var best entity.ID
 	var bestD2 int64 = -1
 	w.units.Each(func(id entity.ID, o *Unit) {
@@ -344,24 +366,39 @@ func (w *World) wildAcquire(uid entity.ID, u *Unit, def *units.Def) entity.ID {
 			if !w.players[o.Owner].Active {
 				return
 			}
-			if w.nearSettlement(o.X, o.Y, settlementFear) {
+			if !bold(u, def) && w.nearSettlement(o.X, o.Y, settlementFear) {
 				return // wolves leave the torchlight alone
 			}
-		} else if !isPrey(def, o.DefID) {
-			return
+		} else if preferred {
+			if !inList(def.PreyPreferred, o.DefID) {
+				return
+			}
+		} else if !isPrey(def, o.DefID, u.Hunger) {
+			return // not on the menu at this hunger level
+		}
+		if !w.inSight(u, rageAggro(def.Aggro, def, u), o.X, o.Y) {
+			return // prey or escort outside the cone
 		}
 		d2 := dist2(u.X, u.Y, o.X, o.Y)
-		if d2 > limit {
-			return
-		}
-		if len(def.Prey) > 0 && o.Owner < MaxPlayers && w.guardsNear(id, o) >= int(PreyEscortMax) {
-			return
+		if !bold(u, def) && def.Predator() && o.Owner < MaxPlayers &&
+			w.guardsNear(id, o) >= int(PreyEscortMax) {
+			return // a starving hunter goes for the guarded prey too
 		}
 		if bestD2 < 0 || d2 < bestD2 || (d2 == bestD2 && id < best) {
 			bestD2, best = d2, id
 		}
 	})
 	return best
+}
+
+// inList reports whether defID sits in a prey list.
+func inList(list []uint16, defID uint16) bool {
+	for _, p := range list {
+		if p == defID {
+			return true
+		}
+	}
+	return false
 }
 
 // wildDrop releases a wild attacker back to roaming; leashed animals
@@ -397,10 +434,10 @@ func (w *World) wildChase(u *Unit, def *units.Def, t *Unit) bool {
 				return false
 			}
 		}
-		stepToward(&u.X, &u.Y, t.X, t.Y, w.speedOf(u))
+		w.stepToward(u, t.X, t.Y, w.speedOf(u))
 		return true
 	}
-	if !def.CampfireImmune {
+	if !def.CampfireImmune && !bold(u, def) {
 		if _, _, ok := w.nearCampfire(u.X, u.Y); ok {
 			wildDrop(u)
 			return false
@@ -433,6 +470,6 @@ func (w *World) wildChase(u *Unit, def *units.Def, t *Unit) bool {
 		wildDrop(u) // the prey reached the torchlight
 		return false
 	}
-	stepToward(&u.X, &u.Y, t.X, t.Y, w.speedOf(u))
+	w.stepToward(u, t.X, t.Y, w.speedOf(u))
 	return true
 }

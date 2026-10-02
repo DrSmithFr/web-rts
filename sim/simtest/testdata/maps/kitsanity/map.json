@@ -1,0 +1,18 @@
+{
+  "format": "rts.map/custom/v1",
+  "name": "kitsanity",
+  "width": 24, "height": 16,
+  "origin": { "seed": 4242 },
+  "terrain": { "fill": "grass" },
+  "height": { "fill": 0 },
+  "biome":  { "fill": "temperate" },
+  "players": [
+    { "spawn": [3, 3], "era": "prehistory", "startKit": "none",
+      "resources": { "food": 0, "wood": 0, "stone": 0, "gold": 0, "oil": 0 } }
+  ],
+  "nodes":     [],
+  "units":     [ { "label": "wolf", "def": "wolf", "owner": "neutral", "x": 18, "y": 8 },
+                 { "label": "rabbit", "def": "rabbit", "owner": "neutral", "x": 12, "y": 8 } ],
+  "buildings": [ { "label": "fire", "def": "campfire", "owner": 0, "x": 6, "y": 6, "complete": true } ],
+  "relics":    [ ]
+}

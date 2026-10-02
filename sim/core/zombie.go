@@ -139,7 +139,7 @@ func (w *World) zombieStep(id entity.ID, u *Unit) {
 			u.TX, u.TY = u.X, u.Y
 			return
 		}
-		stepToward(&u.X, &u.Y, tileCenter(rel.X), tileCenter(rel.Y), w.speedOf(u))
+		w.walkTo(u, tileCenter(rel.X), tileCenter(rel.Y), w.speedOf(u))
 		return
 	}
 	w.zombieRoam(id, u, def)
@@ -172,7 +172,7 @@ func (w *World) zombieRoam(id entity.ID, u *Unit, def *units.Def) {
 		tx, ty = w.zombieWanderTarget(id, u, def)
 		u.TX, u.TY = tileCenter(tx), tileCenter(ty)
 	}
-	stepToward(&u.X, &u.Y, u.TX, u.TY, w.speedOf(u))
+	w.stepToward(u, u.TX, u.TY, w.speedOf(u))
 }
 
 // zombieRoamTile gates roam targets: walkable, leashed to the den and —

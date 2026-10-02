@@ -5,6 +5,7 @@ import { stepYaw, walkAmp, walkPhase } from './animate';
 import { unitModel, UNIT_DEFS, type AnimPart } from './models';
 import { PALETTE, RESOURCE_COLORS } from './palette';
 import { heightSampler } from './height';
+import { conditionGlyph, CONDITION_GLYPHS, emojiTexture } from './emoji';
 
 // Dynamic units as instanced rigid-part models: a merged body, one
 // player-tinted insignia mesh and up to five animated parts (legs, arm,
@@ -23,17 +24,20 @@ export interface RenderUnit {
   cls: number;
   state: number;
   target: number;
+  // heading is the simulation compass direction in whole degrees, 0 at
+  // +Y growing clockwise; the sim owns facing, the renderer only
+  // smooths it.
+  heading: number;
+  // cond is the simulation condition bitmask (sim/core/condition.go).
+  cond: number;
   color: number;
   hpFrac: number;
-}
-
-export interface TargetResolver {
-  (id: number): { x: number; y: number } | null;
 }
 
 const UNIT_CAP = 1200;
 const BAR_CAP = 300;
 const RING_CAP = 96;
+const GLYPH_CAP = 200;
 
 // sim unit state bytes (mirrored from sim/core/entities.go)
 export const STATE_GATHER = 2;
@@ -55,11 +59,13 @@ interface AnimState {
   state: number;
   x: number;
   y: number;
+  vx: number;
+  vy: number;
 }
 
 export interface Actors {
   group: THREE.Group;
-  setUnits(units: RenderUnit[], now: number, resolve: TargetResolver): void;
+  setUnits(units: RenderUnit[], now: number): void;
   setSelection(ids: number[]): void;
   entityPosition(id: number, out: THREE.Vector3): boolean;
 }
@@ -139,6 +145,21 @@ export function buildActors(size: number, heights: Uint16Array, camera: THREE.Ca
   barFill.count = 0;
   group.add(barFill);
 
+  // condition glyphs, billboarded over the hp bar: one instanced set per state
+  const glyphGeo = new THREE.PlaneGeometry(1, 1);
+  const glyphMeshes = CONDITION_GLYPHS.map((c) => {
+    const mesh = new THREE.InstancedMesh(
+      glyphGeo,
+      new THREE.MeshBasicMaterial({ map: emojiTexture(c.glyph), transparent: true, depthWrite: false }),
+      GLYPH_CAP,
+    );
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+    mesh.renderOrder = 3;
+    group.add(mesh);
+    return mesh;
+  });
+
   const matrix = new THREE.Matrix4();
   const partM = new THREE.Matrix4();
   const pivotM = new THREE.Matrix4();
@@ -153,6 +174,8 @@ export function buildActors(size: number, heights: Uint16Array, camera: THREE.Ca
   const scratchColor = new THREE.Color();
   const GREEN = new THREE.Color(0x7bd86a);
   const RED = new THREE.Color(0xd86a6a);
+  const glyphPos = new THREE.Vector3();
+  const glyphScale = new THREE.Vector3();
 
   const animById = new Map<number, AnimState>();
   const unitPos = new Map<number, THREE.Vector3>();
@@ -167,12 +190,13 @@ export function buildActors(size: number, heights: Uint16Array, camera: THREE.Ca
 
   return {
     group,
-    setUnits(units: RenderUnit[], now: number, resolve: TargetResolver): void {
+    setUnits(units: RenderUnit[], now: number): void {
       const dt = lastNow === 0 ? 0.016 : Math.min(0.1, (now - lastNow) / 1000);
       lastNow = now;
 
       const counts = new Map<number, number>();
       unitPos.clear();
+      const glyphN = CONDITION_GLYPHS.map(() => 0);
       let barN = 0;
       let blobN = 0;
       const camQuat = camera.quaternion;
@@ -187,7 +211,7 @@ export function buildActors(size: number, heights: Uint16Array, camera: THREE.Ca
 
         let st = animById.get(u.id);
         if (!st) {
-          st = { yaw: 0, walk: 0, amp: 0, cyc: 0, state: u.state, x: u.x, y: u.y };
+          st = { yaw: 0, walk: 0, amp: 0, cyc: 0, state: u.state, x: u.x, y: u.y, vx: 0, vy: 0 };
           animById.set(u.id, st);
         }
         const busyState = u.state === STATE_ATTACK || u.state === STATE_GATHER || u.state === STATE_BUILD;
@@ -203,16 +227,23 @@ export function buildActors(size: number, heights: Uint16Array, camera: THREE.Ca
         const dx = u.x - st.x;
         const dy = u.y - st.y;
         const moved = Math.sqrt(dx * dx + dy * dy);
-        const speed = moved / Math.max(dt, 0.004);
         st.x = u.x;
         st.y = u.y;
 
-        const moving = moved > 0.0015;
+        // Smoothed velocity: raw per-frame deltas are tiny and noisy
+        // (20 Hz ticks, fixed-point positions), so facing the raw delta
+        // makes models flicker on slow or diagonal walks.
+        const vel = Math.max(dt, 0.004);
+        const blend = Math.min(1, dt * 10);
+        st.vx += (dx / vel - st.vx) * blend;
+        st.vy += (dy / vel - st.vy) * blend;
+        const speed = Math.hypot(st.vx, st.vy);
+
+        const moving = speed > 0.35;
         st.amp = walkAmp(st.amp, moving ? speed : 0, dt);
         st.walk = walkPhase(st.walk, moved);
 
-        const heading = moving ? Math.atan2(dx, dy) : facingTarget(u, resolve);
-        st.yaw = stepYaw(st.yaw, heading, dt);
+        st.yaw = stepYaw(st.yaw, (u.heading * Math.PI) / 180, dt);
 
         const jitter = 0.94 + 0.12 * hash01(u.id, u.owner, 31);
         const bob = Math.abs(Math.sin(st.walk * 2)) * 0.05 * st.amp;
@@ -334,6 +365,18 @@ export function buildActors(size: number, heights: Uint16Array, camera: THREE.Ca
           barFill.setColorAt(barN, scratchColor);
           barN++;
         }
+
+        // one glyph per unit, the highest priority condition it carries
+        const cond = conditionGlyph(u.cond);
+        if (cond >= 0 && glyphN[cond] < GLYPH_CAP) {
+          const gs = 0.42 * unitScale;
+          const rise = py + (1.16 + 0.06 * Math.sin(now * 0.004 + u.id)) * unitScale;
+          glyphPos.set(u.x, rise, u.y);
+          glyphScale.set(gs, gs, 1);
+          matrix.compose(glyphPos, camQuat, glyphScale);
+          glyphMeshes[cond].setMatrixAt(glyphN[cond], matrix);
+          glyphN[cond]++;
+        }
       }
 
       for (const [def, rig] of rigs) {
@@ -353,6 +396,10 @@ export function buildActors(size: number, heights: Uint16Array, camera: THREE.Ca
         }
       }
 
+      CONDITION_GLYPHS.forEach((_, i) => {
+        glyphMeshes[i].count = glyphN[i];
+        glyphMeshes[i].instanceMatrix.needsUpdate = true;
+      });
       barBack.count = barN;
       barBack.instanceMatrix.needsUpdate = true;
       barFill.count = barN;
@@ -394,12 +441,3 @@ export function buildActors(size: number, heights: Uint16Array, camera: THREE.Ca
   };
 }
 
-// facingTarget returns a yaw towards an attack/gather/build target, or
-// NaN to keep the current heading.
-function facingTarget(u: RenderUnit, resolve: TargetResolver): number {
-  if (u.target === 0) return NaN;
-  if (u.state !== STATE_ATTACK && u.state !== STATE_GATHER && u.state !== STATE_BUILD) return NaN;
-  const t = resolve(u.target);
-  if (!t) return NaN;
-  return Math.atan2(t.x - u.x, t.y - u.y);
-}

@@ -78,7 +78,7 @@ func TestTrainEraGate(t *testing.T) {
 
 func TestBuildEraGate(t *testing.T) {
 	w := flatWorld(1)
-	villagerID := spawnUnitAt(t, w, 0, DefVillager, 20, 20)
+	villagerID := w.SpawnUnit(0, DefVillager, 20, 20)
 	pl := &w.players[0]
 	pl.Res[resource.Wood] = 200
 
@@ -158,7 +158,7 @@ func TestRelicControlAndVictory(t *testing.T) {
 		// a pair per tile: the first trickle guardians bite hard and
 		// the fallen rise again — a lone post would feed the horde
 		for k := 0; k < 2; k++ {
-			posts[ri][k] = spawnUnitAt(t, w, 0, DefScout, rels0[ri].X, rels0[ri].Y)
+			posts[ri][k] = w.SpawnUnit(0, DefScout, rels0[ri].X, rels0[ri].Y)
 		}
 	}
 	// control is presence: scouts that drifted off and are not fighting

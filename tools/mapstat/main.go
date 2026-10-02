@@ -182,20 +182,20 @@ func spawnsFlat(m *worldgen.Map) bool {
 
 // spawnsConnected floods land from the first spawn (only water blocks).
 func spawnsConnected(m *worldgen.Map) bool {
-	size := m.Grid().Size()
+	w, h := m.Grid().Width(), m.Grid().Height()
 	spawns := m.Spawns()
-	seen := make([]bool, size*size)
-	queue := []int{spawns[0][1]*size + spawns[0][0]}
+	seen := make([]bool, w*h)
+	queue := []int{spawns[0][1]*w + spawns[0][0]}
 	seen[queue[0]] = true
 	for head := 0; head < len(queue); head++ {
 		i := queue[head]
-		x, y := i%size, i/size
+		x, y := i%w, i/w
 		for _, o := range [4][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
 			nx, ny := x+o[0], y+o[1]
-			if nx < 0 || ny < 0 || nx >= size || ny >= size {
+			if nx < 0 || ny < 0 || nx >= w || ny >= h {
 				continue
 			}
-			j := ny*size + nx
+			j := ny*w + nx
 			if !seen[j] && !m.Grid().Tiles()[j].Water() {
 				seen[j] = true
 				queue = append(queue, j)
@@ -203,7 +203,7 @@ func spawnsConnected(m *worldgen.Map) bool {
 		}
 	}
 	for _, s := range spawns {
-		if !seen[s[1]*size+s[0]] {
+		if !seen[s[1]*w+s[0]] {
 			return false
 		}
 	}

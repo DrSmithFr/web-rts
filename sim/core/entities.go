@@ -90,9 +90,9 @@ const (
 	// WorkRange is how close a worker must stand to a node or site.
 	WorkRange fixed.F16 = 1<<16 + 1<<15 // 1.5 tiles
 
-	// Vision radii in tiles (fog of war).
-	BuildingVision = 8
-	SiteVision     = 4
+	// CampfireVision is the circle (in tiles) a completed campfire keeps
+	// revealed; no other building reveals ground.
+	CampfireVision = 10
 	// VillagerVision is the fallback when a unit has no def entry.
 	VillagerVision = 6
 
@@ -106,11 +106,6 @@ const (
 
 	// MaxTrainQueue bounds queued units per building.
 	MaxTrainQueue int32 = 5
-
-	// FleeRadius is how close a threat must be to panic a fleeing animal.
-	FleeRadius int32 = 4
-	// FleeClearRadius is the distance at which a fleeing animal calms down.
-	FleeClearRadius int32 = 7
 
 	// CampfireAura is the radius in tiles where completed campfires
 	// repulse shy animals and calm aggressive ones (bears are immune).
@@ -148,8 +143,9 @@ const (
 	// FieldMargin pads a flow-field window around its route bounds.
 	FieldMargin int32 = 16
 
-	// MaxFieldSpan caps one window axis.
-	MaxFieldSpan int32 = 192
+	// MaxFieldSpan caps one window axis. Walkers route around water and
+	// rock through a field, so the span has to cover a cross-map walk too.
+	MaxFieldSpan int32 = 384
 
 	// RelicCount is the number of map relics (mirrors worldgen).
 	RelicCount = 5
@@ -178,6 +174,18 @@ type Unit struct {
 	State  uint8
 	X, Y   fixed.F16
 	TX, TY fixed.F16
+	// Heading is the direction the actor faces, in whole degrees
+	// clockwise from +Y (see sim/core/angle.go). Movement turns by at
+	// most the def turnRate per tick, then advances along this heading.
+	Heading int32
+	// Hunger is a hunter's food meter: 100 (sated) to 0 (starving). Only
+	// species with a prey list carry one (see sim/core/hunger.go).
+	Hunger int32
+	// Cond holds the condition bits (CondFear, CondTerror, CondRage).
+	// Fear follows sight, terror runs on CondTicks (the remaining ticks
+	// of panic a blow leaves behind).
+	Cond      uint8
+	CondTicks int32
 	// HomeX/HomeY is the spawn point; leashed species roam near it.
 	HomeX, HomeY fixed.F16
 	// PatrolX/Y is the other end of a patrol segment.

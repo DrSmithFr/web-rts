@@ -15,14 +15,9 @@ import (
 // flatWorld gives a 40x40 all-grass island with two spawns and no nodes
 // so combat tests control every entity.
 func flatWorld(seed uint64) *World {
-	grid := terrain.NewGrid(40)
+	grid := terrain.NewGridSquare(40)
 	spawns := [][2]int{{8, 8}, {32, 32}}
 	return NewWorldWithMap(seed, worldgen.Custom(grid, spawns, nil))
-}
-
-func spawnUnitAt(t *testing.T, w *World, owner uint8, defID uint16, tx, ty int32) entity.ID {
-	t.Helper()
-	return w.spawnUnit(owner, defID, tileCenter(tx), tileCenter(ty))
 }
 
 func TestAttackDamageFormula(t *testing.T) {
@@ -33,7 +28,7 @@ func TestAttackDamageFormula(t *testing.T) {
 	villager := w.udefs.Get(DefVillager)
 
 	target := func(defID uint16) *Unit {
-		id := spawnUnitAt(t, w, 0, defID, 5, 5)
+		id := w.SpawnUnit(0, defID, 5, 5)
 		return w.units.Get(id)
 	}
 	cases := []struct {
@@ -57,8 +52,8 @@ func TestAttackDamageFormula(t *testing.T) {
 
 func TestAttackOrderKillsAndUpdatesPop(t *testing.T) {
 	w := flatWorld(2)
-	killer := spawnUnitAt(t, w, 0, DefLancer, 10, 10)
-	victim := spawnUnitAt(t, w, 1, DefVillager, 11, 10)
+	killer := w.SpawnUnit(0, DefLancer, 10, 10)
+	victim := w.SpawnUnit(1, DefVillager, 11, 10)
 	if w.players[1].Pop < 4 {
 		t.Fatalf("expected victim pop, got %d", w.players[1].Pop)
 	}
@@ -82,8 +77,8 @@ func TestAttackOrderKillsAndUpdatesPop(t *testing.T) {
 
 func TestBoarRetaliates(t *testing.T) {
 	w := flatWorld(3)
-	attacker := spawnUnitAt(t, w, 0, DefLancer, 10, 10)
-	boar := spawnUnitAt(t, w, OwnerNeutral, DefBoar, 11, 10)
+	attacker := w.SpawnUnit(0, DefLancer, 10, 10)
+	boar := w.SpawnUnit(OwnerNeutral, DefBoar, 11, 10)
 	w.Step([]proto.Order{{Player: 0, Kind: orders.Attack,
 		Payload: orders.AttackPayload([]uint32{uint32(attacker)}, uint32(boar), orders.TargetUnit)}})
 	w.Step(nil)
@@ -104,8 +99,8 @@ func TestBoarRetaliates(t *testing.T) {
 
 func TestDeerFleesFromVillager(t *testing.T) {
 	w := flatWorld(4)
-	deer := spawnUnitAt(t, w, OwnerNeutral, DefDeer, 20, 20)
-	villager := spawnUnitAt(t, w, 0, DefVillager, 23, 20) // 3 tiles away
+	deer := w.SpawnUnit(OwnerNeutral, DefDeer, 20, 20)
+	villager := w.SpawnUnit(0, DefVillager, 23, 20) // 3 tiles away
 	start := w.units.Get(deer)
 	d0 := dist2(start.X, start.Y, w.units.Get(villager).X, w.units.Get(villager).Y)
 	for i := 0; i < 30; i++ {
@@ -126,8 +121,8 @@ func TestDeerFleesFromVillager(t *testing.T) {
 
 func TestHuntLeavesGatherableCorpse(t *testing.T) {
 	w := flatWorld(5)
-	villager := spawnUnitAt(t, w, 0, DefVillager, 20, 20)
-	boar := spawnUnitAt(t, w, OwnerNeutral, DefDeer, 22, 20)
+	villager := w.SpawnUnit(0, DefVillager, 20, 20)
+	boar := w.SpawnUnit(OwnerNeutral, DefDeer, 22, 20)
 	w.Step([]proto.Order{{Player: 0, Kind: orders.Attack,
 		Payload: orders.AttackPayload([]uint32{uint32(villager)}, uint32(boar), orders.TargetUnit)}})
 	for i := 0; i < 20*300 && w.units.Alive(boar); i++ {
@@ -155,7 +150,7 @@ func TestHuntLeavesGatherableCorpse(t *testing.T) {
 
 func TestPatrolLoops(t *testing.T) {
 	w := flatWorld(6)
-	id := spawnUnitAt(t, w, 0, DefScout, 8, 8)
+	id := w.SpawnUnit(0, DefScout, 8, 8)
 	w.Step([]proto.Order{{Player: 0, Kind: orders.Patrol,
 		Payload: orders.PatrolPayload([]uint32{uint32(id)}, 20*16, 8*16)}})
 	sawEast, sawWest := false, false
@@ -181,9 +176,9 @@ func TestPatrolLoops(t *testing.T) {
 
 func TestAutoAcquireNearestEnemy(t *testing.T) {
 	w := flatWorld(7)
-	near := spawnUnitAt(t, w, 1, DefLancer, 24, 10)
-	spawnUnitAt(t, w, 1, DefLancer, 26, 10)
-	scout := spawnUnitAt(t, w, 0, DefScout, 22, 10)
+	near := w.SpawnUnit(1, DefLancer, 24, 10)
+	w.SpawnUnit(1, DefLancer, 26, 10)
+	scout := w.SpawnUnit(0, DefScout, 22, 10)
 	for i := 0; i < 3; i++ {
 		w.Step(nil) // reveal via vision, then acquire
 	}
@@ -201,12 +196,12 @@ func TestCombatDeterminism(t *testing.T) {
 		w := flatWorld(8)
 		lancers := make([]uint32, 0, 3)
 		for i := int32(0); i < 3; i++ {
-			id := spawnUnitAt(t, w, 0, DefLancer, 8+i, 10)
+			id := w.SpawnUnit(0, DefLancer, 8+i, 10)
 			lancers = append(lancers, uint32(id))
 		}
 		archers := make([]uint32, 0, 3)
 		for i := int32(0); i < 3; i++ {
-			id := spawnUnitAt(t, w, 1, DefArcher, 20, 10+i)
+			id := w.SpawnUnit(1, DefArcher, 20, 10+i)
 			archers = append(archers, uint32(id))
 		}
 		w.Step([]proto.Order{
@@ -230,7 +225,7 @@ func TestAttackEnemyBuilding(t *testing.T) {
 	_, b := w.buildings.Create()
 	b.DefID, b.Owner, b.TileX, b.TileY, b.Size, b.HP = BldHut, 1, 20, 20, 1, BuildingHP
 	b.Progress = 0
-	lancer := spawnUnitAt(t, w, 0, DefLancer, 10, 20)
+	lancer := w.SpawnUnit(0, DefLancer, 10, 20)
 	var bid entity.ID
 	w.buildings.Each(func(id entity.ID, e *Building) {
 		if e.Owner == 1 {

@@ -102,6 +102,15 @@ func (f *Field) AtGoal(x, y int32) bool { return x == f.GoalX && y == f.GoalY }
 // BlockFn, when not nil, additionally reports tiles blocked by entities
 // (buildings); the walker's own tile is never considered blocked.
 func NextStep(f *Field, walked WalkFn, blocked WalkFn, x, y int32) (int32, int32, bool) {
+	return NextStepTo(f, walked, blocked, x, y, -1, -1)
+}
+
+// NextStepTo is NextStep with a goal-aware tie-break: among the
+// neighbours that all shorten the route by one step, the one whose tile
+// lies closest to the goal (squared tile distance, ties on the fixed
+// scan order) wins. Straight lines and shallow angles walk smoothly
+// instead of staircases. A negative goal disables the tie-break.
+func NextStepTo(f *Field, walked WalkFn, blocked WalkFn, x, y, goalX, goalY int32) (int32, int32, bool) {
 	d := f.Distance(x, y)
 	if d == Unreachable {
 		return x, y, false
@@ -109,6 +118,8 @@ func NextStep(f *Field, walked WalkFn, blocked WalkFn, x, y int32) (int32, int32
 	if d == 0 {
 		return x, y, true
 	}
+	bestN := -1
+	var bestD2 int64
 	for n := 0; n < 8; n++ {
 		nx, ny := x+neighborDX[n], y+neighborDY[n]
 		dn := f.Distance(nx, ny)
@@ -121,7 +132,17 @@ func NextStep(f *Field, walked WalkFn, blocked WalkFn, x, y int32) (int32, int32
 		if blocked != nil && blocked(nx, ny) {
 			continue
 		}
-		return nx, ny, true
+		if goalX < 0 || goalY < 0 {
+			return nx, ny, true
+		}
+		ex, ey := int64(nx-goalX), int64(ny-goalY)
+		d2 := ex*ex + ey*ey
+		if bestN < 0 || d2 < bestD2 {
+			bestN, bestD2 = n, d2
+		}
+	}
+	if bestN >= 0 {
+		return x + neighborDX[bestN], y + neighborDY[bestN], true
 	}
 	// Every ideal neighbour is blocked: wait in place rather than walk
 	// into the obstruction.

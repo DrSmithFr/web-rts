@@ -8,7 +8,9 @@ import { buildScatterWindow } from './scatter';
 // GroundChunks splits the map into CHUNK-tile squares, one mesh each, so
 // fog repaints and frustum culling stay local. Vertex colors bake the fog
 // state per corner tile. Each chunk also carries a translucent water
-// surface (shared animated material) and merged decor scatter.
+// surface (shared animated material) and merged decor scatter. The map is
+// width x height tiles; helper builders still take the map width as
+// stride.
 
 export const CHUNK = 32;
 
@@ -33,7 +35,8 @@ export class GroundChunks {
   private readonly uniforms = waterUniforms();
 
   constructor(
-    size: number,
+    width: number,
+    height: number,
     tiles: Uint8Array,
     heights: Uint16Array,
     blocked?: Set<number>,
@@ -41,25 +44,25 @@ export class GroundChunks {
   ) {
     this.waterMat = makeWaterMaterial(this.uniforms);
     this.decorMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-    const seaY = waterLevelY(size, tiles, heights);
+    const seaY = waterLevelY(width, tiles, heights);
 
-    for (let y0 = 0; y0 < size; y0 += CHUNK) {
-      for (let x0 = 0; x0 < size; x0 += CHUNK) {
-        const w = Math.min(CHUNK, size - x0);
-        const h = Math.min(CHUNK, size - y0);
-        const mesh = buildTerrainMesh(size, tiles, heights, { x0, y0, w, h, biomes });
+    for (let y0 = 0; y0 < height; y0 += CHUNK) {
+      for (let x0 = 0; x0 < width; x0 += CHUNK) {
+        const w = Math.min(CHUNK, width - x0);
+        const h = Math.min(CHUNK, height - y0);
+        const mesh = buildTerrainMesh(width, tiles, heights, { x0, y0, w, h, biomes });
         const geo = mesh.geometry;
         const color = geo.getAttribute('color');
         const base = Float32Array.from(color.array as Float32Array);
 
         let water: THREE.Mesh | null = null;
-        const waterGeo = buildWaterWindow(size, tiles, { x0, y0, w, h }, seaY);
+        const waterGeo = buildWaterWindow(width, tiles, { x0, y0, w, h }, seaY);
         if (waterGeo) {
           water = new THREE.Mesh(waterGeo, this.waterMat);
           water.renderOrder = 1;
         }
         let decor: THREE.Mesh | null = null;
-        const decorGeo = buildScatterWindow(size, tiles, heights, { x0, y0, w, h }, blocked);
+        const decorGeo = buildScatterWindow(width, tiles, heights, { x0, y0, w, h }, blocked);
         if (decorGeo) {
           decor = new THREE.Mesh(decorGeo, this.decorMat);
         }

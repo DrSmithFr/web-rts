@@ -20,6 +20,12 @@ export interface UnitRec {
   y: number;
   hp: number;
   target: number;
+  // heading is the simulation compass direction in whole degrees, 0 at
+  // +Y growing clockwise (sim/core/angle.go).
+  heading: number;
+  // cond is the condition bitmask (sim/core/condition.go): 1 fear,
+  // 2 terror, 4 rage.
+  cond: number;
 }
 
 export interface NodeRec {
@@ -139,6 +145,10 @@ export class SimWorld {
     return this.sim.mapSize(this.id);
   }
 
+  mapHeight(): number {
+    return this.sim.mapHeight(this.id);
+  }
+
   mapTiles(): Uint8Array {
     return this.sim.mapTiles(this.id);
   }
@@ -147,7 +157,8 @@ export class SimWorld {
     return this.sim.mapBiomes(this.id);
   }
 
-  // vertexHeights decodes the (size+1)^2 whole-number vertex heights.
+  // vertexHeights decodes the (width+1)*(height+1) whole-number vertex
+  // heights, row-major.
   vertexHeights(): Uint16Array {
     const raw = this.sim.mapHeights(this.id);
     const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
@@ -178,7 +189,7 @@ export class SimWorld {
     const raw = this.sim.unitsBlob(this.id);
     const v = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     const out: UnitRec[] = [];
-    for (let o = 0; o + 24 <= raw.byteLength; o += 24) {
+    for (let o = 0; o + 28 <= raw.byteLength; o += 28) {
       out.push({
         id: v.getUint32(o, true),
         owner: raw[o + 4],
@@ -191,6 +202,8 @@ export class SimWorld {
         hp: v.getUint16(o + 12, true),
         target: v.getUint32(o + 16, true),
         carried: v.getUint16(o + 20, true),
+        heading: v.getUint16(o + 22, true),
+        cond: raw[o + 24],
       });
     }
     return out;

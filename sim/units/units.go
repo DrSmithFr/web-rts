@@ -23,6 +23,14 @@ const (
 	BonusBuilding uint8 = 0
 )
 
+// DefaultTurnRate is the turn speed (degrees per tick) a def gets when
+// the JSON omits turnRate.
+const DefaultTurnRate int32 = 30
+
+// DefaultVisionArc is the field of view (degrees) a def gets when the
+// JSON omits visionArc: a full circle.
+const DefaultVisionArc int32 = 360
+
 // Damage types; armor is chosen by the attack's type.
 const (
 	TypePierce uint8 = 1
@@ -50,7 +58,9 @@ type Def struct {
 	Class       uint8  `json:"class"`
 	HP          int32  `json:"hp"`
 	Speed16     int32  `json:"speed16"`
+	TurnRate    int32  `json:"turnRate"` // degrees per tick the actor can pivot
 	Vision      int32  `json:"vision"`
+	VisionArc   int32  `json:"visionArc"` // degrees of field of view, 360 = all around
 	Damage      int32  `json:"damage"`
 	DamageType  uint8  `json:"damageType"`
 	ArmorPierce int32  `json:"armorPierce"`
@@ -64,19 +74,35 @@ type Def struct {
 	TrainBy     uint16 `json:"trainBy"`
 	TrainTicks  int32  `json:"trainTicks"`
 	CorpseFood  int32  `json:"corpseFood"`
-	Flee        bool   `json:"flee"`
+	// TerrorTicks is how long an entity that was struck runs for. Only
+	// hunted animals and non-combat humans panic (see core.feelsFear).
+	TerrorTicks int32 `json:"terrorTicks"`
 	// Wild AI fields (class 5 only; ignored by other classes).
-	FleeRadius int32  `json:"fleeRadius"` // panic radius in tiles (flee)
-	FleeClear  int32  `json:"fleeClear"`  // tiles at which flight calms
-	Sleep      string `json:"sleep"`      // ""|"day"|"night" activity window
-	Aggro      int32  `json:"aggro"`      // wild attacker charges within this radius
-	Leash      int32  `json:"leash"`      // roam this many tiles from spawn (0 = free)
+	Sleep string `json:"sleep"` // ""|"day"|"night" activity window
+	Aggro int32  `json:"aggro"` // wild attacker charges within this radius
+	Leash int32  `json:"leash"` // roam this many tiles from spawn (0 = free)
 	// Habitat confines the animal to one terrain band; "forest" today.
 	Habitat string `json:"habitat"`
 	// CampfireImmune species ignore the campfire repulse aura.
 	CampfireImmune bool `json:"campfireImmune"`
-	// Prey lists neutral animal def ids a wild attacker hunts.
-	Prey []uint16 `json:"prey"`
+	// PreyPreferred lists neutral animal def ids a hunter takes the
+	// moment it sees them. PreyFallback lists the opportunistic meals it
+	// only goes for when its food meter is low; PreyFallbackAt is the
+	// hunger percentage (1..100) that opens that list.
+	PreyPreferred  []uint16 `json:"preyPreferred"`
+	PreyFallback   []uint16 `json:"preyFallback"`
+	PreyFallbackAt int32    `json:"preyFallbackAt"`
+	// HungerDecay is the ticks a hunter goes without food per point of
+	// hunger (0 = the species is never hungry, so it never hunts for
+	// hunger reasons). Hunger runs from 100 (sated) to 0 (starving).
+	HungerDecay int32 `json:"hungerDecay"`
+	// RageSpeed/RageAggro are percentages applied while enraged (hunger
+	// at or below 10%): a starving hunter moves further and bites wider.
+	RageSpeed int32 `json:"rageSpeed"`
+	RageAggro int32 `json:"rageAggro"`
+	// Hunted is derived at load time: the species stands on some
+	// predator's menu, so it is prey and reacts to what it sees.
+	Hunted bool `json:"-"`
 	// ChaseLost: a wild attacker abandons the chase once the quarry is
 	// this many tiles away (0 = the species never gives up this way).
 	ChaseLost int32 `json:"chaseLost"`
@@ -89,6 +115,15 @@ type Def struct {
 
 // Attacks reports whether this unit can deal damage at all.
 func (d *Def) Attacks() bool { return d.Damage > 0 }
+
+// Predator reports whether the species hunts other animals at all.
+func (d *Def) Predator() bool {
+	return len(d.PreyPreferred) > 0 || len(d.PreyFallback) > 0
+}
+
+// Hungry reports whether the species carries a hunger clock: only hunters
+// do, and only when the data gives a decay rate.
+func (d *Def) Hungry() bool { return d.Predator() && d.HungerDecay > 0 }
 
 // Military reports whether the unit auto-acquires visible enemies while
 // idle (the combat classes).
@@ -153,6 +188,12 @@ func Parse(raw []byte) (*Table, error) {
 	seen := make([]bool, 0x100)
 	t := &Table{}
 	for _, d := range doc.Units {
+		if d.TurnRate == 0 {
+			d.TurnRate = DefaultTurnRate // absent in JSON
+		}
+		if d.VisionArc == 0 {
+			d.VisionArc = DefaultVisionArc // absent in JSON
+		}
 		switch {
 		case d.ID == 0:
 			return nil, errors.New("unit: id must be non-zero")
@@ -166,6 +207,10 @@ func Parse(raw []byte) (*Table, error) {
 			return nil, fmt.Errorf("unit %s: hp must be >= 1", d.Key)
 		case d.Speed16 < 1:
 			return nil, fmt.Errorf("unit %s: speed16 must be >= 1", d.Key)
+		case d.TurnRate < 1 || d.TurnRate > 359:
+			return nil, fmt.Errorf("unit %s: turnRate must be 1..359", d.Key)
+		case d.VisionArc < 1 || d.VisionArc > 360:
+			return nil, fmt.Errorf("unit %s: visionArc must be 1..360", d.Key)
 		case d.Vision < 1:
 			return nil, fmt.Errorf("unit %s: vision must be >= 1", d.Key)
 		case d.Damage < 0:
@@ -184,12 +229,16 @@ func Parse(raw []byte) (*Table, error) {
 			return nil, fmt.Errorf("unit %s: trainable without a building", d.Key)
 		case d.CorpseFood < 0:
 			return nil, fmt.Errorf("unit %s: negative corpse food", d.Key)
-		case d.FleeRadius < 0 || d.FleeClear < 0 || d.Aggro < 0 || d.Leash < 0 || d.ChaseLost < 0:
+		case d.HungerDecay < 0 || d.RageSpeed < 0 || d.RageAggro < 0:
+			return nil, fmt.Errorf("unit %s: negative hunger setting", d.Key)
+		case d.HungerDecay > 0 && !d.Predator():
+			return nil, fmt.Errorf("unit %s: hunger without a prey list", d.Key)
+		case d.PreyFallbackAt < 0 || d.PreyFallbackAt > 100:
+			return nil, fmt.Errorf("unit %s: preyFallbackAt must be 0..100", d.Key)
+		case len(d.PreyFallback) > 0 && d.PreyFallbackAt < 1:
+			return nil, fmt.Errorf("unit %s: preyFallback without preyFallbackAt", d.Key)
+		case d.TerrorTicks < 0 || d.Aggro < 0 || d.Leash < 0 || d.ChaseLost < 0:
 			return nil, fmt.Errorf("unit %s: negative wild AI radius", d.Key)
-		case d.Flee && d.FleeRadius < 1:
-			return nil, fmt.Errorf("unit %s: flee needs a fleeRadius", d.Key)
-		case d.Flee && d.FleeClear < d.FleeRadius:
-			return nil, fmt.Errorf("unit %s: fleeClear must reach past fleeRadius", d.Key)
 		case d.Aggro > 0 && d.Damage == 0:
 			return nil, fmt.Errorf("unit %s: aggro without damage", d.Key)
 		case d.Sleep != "" && d.Sleep != "day" && d.Sleep != "night":
@@ -213,6 +262,17 @@ func Parse(raw []byte) (*Table, error) {
 			seen[d.ID] = true
 		}
 		t.defs = append(t.defs, d)
+	}
+	// Hunted is derived: a species listed as prey by any def is prey, and
+	// prey is what feels fear.
+	hunted := map[uint16]bool{}
+	for _, d := range t.defs {
+		for _, p := range append(append([]uint16(nil), d.PreyPreferred...), d.PreyFallback...) {
+			hunted[p] = true
+		}
+	}
+	for i := range t.defs {
+		t.defs[i].Hunted = hunted[t.defs[i].ID]
 	}
 	return t, nil
 }

@@ -25,7 +25,7 @@ func soloWorld(seed uint64) *World {
 }
 
 func forestGrid() *terrain.Grid {
-	grid := terrain.NewGrid(40)
+	grid := terrain.NewGridSquare(40)
 	for y := int32(14); y <= 26; y++ {
 		for x := int32(14); x <= 26; x++ {
 			grid.SetTile(int(x), int(y), terrain.Forest)
@@ -62,8 +62,8 @@ func (w *World) attacking(defID uint16, v entity.ID) bool {
 // the reduced wake radius (5 - SleepWake = 2).
 func TestDeerSleepsAtNight(t *testing.T) {
 	w := forestWorld(11)
-	deer := spawnUnitAt(t, w, OwnerNeutral, DefDeer, 20, 20)
-	spawnUnitAt(t, w, 0, DefVillager, 23, 20)
+	deer := w.SpawnUnit(OwnerNeutral, DefDeer, 20, 20)
+	w.SpawnUnit(0, DefVillager, 23, 20)
 	for w.Tick() < 4900 {
 		w.Step(nil)
 	}
@@ -85,14 +85,14 @@ func TestDeerSleepsAtNight(t *testing.T) {
 // rouses the deer and it flees.
 func TestSleepingDeerWakesToClosePlayer(t *testing.T) {
 	w := forestWorld(12)
-	deer := spawnUnitAt(t, w, OwnerNeutral, DefDeer, 20, 20)
+	deer := w.SpawnUnit(OwnerNeutral, DefDeer, 20, 20)
 	for w.Tick() < 4900 {
 		w.Step(nil)
 	}
 	if w.units.Get(deer).State != UnitSleep {
 		t.Fatal("deer not asleep before the player arrives")
 	}
-	v := spawnUnitAt(t, w, 0, DefVillager, tileOf(w.units.Get(deer).X)+1, tileOf(w.units.Get(deer).Y))
+	v := w.SpawnUnit(0, DefVillager, tileOf(w.units.Get(deer).X)+1, tileOf(w.units.Get(deer).Y))
 	for i := 0; i < 5; i++ {
 		w.Step(nil)
 		if w.units.Get(deer).State != UnitSleep {
@@ -116,8 +116,8 @@ func TestSleepingDeerWakesToClosePlayer(t *testing.T) {
 // being struck first (aggression, not retaliation).
 func TestBoarChargesPlayer(t *testing.T) {
 	w := forestWorld(13)
-	spawnUnitAt(t, w, OwnerNeutral, DefBoar, 20, 20)
-	v := spawnUnitAt(t, w, 0, DefVillager, 24, 20)
+	w.SpawnUnit(OwnerNeutral, DefBoar, 20, 20)
+	v := w.SpawnUnit(0, DefVillager, 24, 20)
 	for i := 0; i < 40; i++ {
 		w.Step(nil)
 		if w.attacking(DefBoar, v) {
@@ -131,8 +131,8 @@ func TestBoarChargesPlayer(t *testing.T) {
 // villager shelters at a campfire the boar gives up.
 func TestCampfireShieldsVillagerFromBoar(t *testing.T) {
 	w := forestWorld(14)
-	spawnUnitAt(t, w, OwnerNeutral, DefBoar, 20, 20)
-	v := spawnUnitAt(t, w, 0, DefVillager, 24, 20)
+	w.SpawnUnit(OwnerNeutral, DefBoar, 20, 20)
+	v := w.SpawnUnit(0, DefVillager, 24, 20)
 	charged := false
 	for i := 0; i < 40; i++ {
 		w.Step(nil)
@@ -157,7 +157,7 @@ func TestCampfireShieldsVillagerFromBoar(t *testing.T) {
 // TestCampfireRepelsDeer: a shy animal inside the aura flees outward.
 func TestCampfireRepelsDeer(t *testing.T) {
 	w := forestWorld(15)
-	deer := spawnUnitAt(t, w, OwnerNeutral, DefDeer, 20, 20)
+	deer := w.SpawnUnit(OwnerNeutral, DefDeer, 20, 20)
 	placeCampfire(t, w, 23, 20)
 	for i := 0; i < 5; i++ {
 		w.Step(nil)
@@ -180,8 +180,8 @@ func TestCampfireRepelsDeer(t *testing.T) {
 func TestBearStaysOnCampfireVictim(t *testing.T) {
 	w := forestWorld(16)
 	placeCampfire(t, w, 21, 19)
-	spawnUnitAt(t, w, OwnerNeutral, DefBear, 20, 20)
-	v := spawnUnitAt(t, w, 0, DefVillager, 21, 20)
+	w.SpawnUnit(OwnerNeutral, DefBear, 20, 20)
+	v := w.SpawnUnit(0, DefVillager, 21, 20)
 	for i := 0; i < 60; i++ {
 		w.Step(nil)
 		if w.attacking(DefBear, v) {
@@ -195,8 +195,8 @@ func TestBearStaysOnCampfireVictim(t *testing.T) {
 // chase and heads back inside its leash.
 func TestBearLeashPullsHome(t *testing.T) {
 	w := forestWorld(17)
-	bear := spawnUnitAt(t, w, OwnerNeutral, DefBear, 5, 5)
-	v := spawnUnitAt(t, w, 0, DefVillager, 33, 34)
+	bear := w.SpawnUnit(OwnerNeutral, DefBear, 5, 5)
+	v := w.SpawnUnit(0, DefVillager, 33, 34)
 	b := w.units.Get(bear)
 	// teleport the bear far from home mid-chase (white-box leash test)
 	b.X, b.Y = tileCenter(30), tileCenter(30)
@@ -216,8 +216,8 @@ func TestBearLeashPullsHome(t *testing.T) {
 // TestWolfHuntsLoneVillager: wolves hunt humans at night.
 func TestWolfHuntsLoneVillager(t *testing.T) {
 	w := soloWorld(18)
-	spawnUnitAt(t, w, OwnerNeutral, DefWolf, 20, 20)
-	v := spawnUnitAt(t, w, 0, DefVillager, 24, 20)
+	w.SpawnUnit(OwnerNeutral, DefWolf, 20, 20)
+	v := w.SpawnUnit(0, DefVillager, 24, 20)
 	for i := 0; i < 40; i++ {
 		w.Step(nil)
 		if w.attacking(DefWolf, v) {
@@ -230,8 +230,8 @@ func TestWolfHuntsLoneVillager(t *testing.T) {
 // TestWolfSleepsAtNight: wolves den at night, hunting with the daylight.
 func TestWolfSleepsAtNight(t *testing.T) {
 	w := soloWorld(19)
-	wolf := spawnUnitAt(t, w, OwnerNeutral, DefWolf, 20, 20)
-	v := spawnUnitAt(t, w, 0, DefVillager, 28, 20)
+	wolf := w.SpawnUnit(OwnerNeutral, DefWolf, 20, 20)
+	v := w.SpawnUnit(0, DefVillager, 28, 20)
 	for w.Tick() < 4900 {
 		w.Step(nil)
 	}
@@ -252,11 +252,11 @@ func TestWolfSleepsAtNight(t *testing.T) {
 // guard distance) is left alone; the wolf takes the isolated one.
 func TestWolfAvoidsGroups(t *testing.T) {
 	w := soloWorld(20)
-	spawnUnitAt(t, w, OwnerNeutral, DefWolf, 20, 20)
+	w.SpawnUnit(OwnerNeutral, DefWolf, 20, 20)
 	for _, p := range [][2]int32{{24, 20}, {24, 21}, {25, 20}, {25, 21}} {
-		spawnUnitAt(t, w, 0, DefVillager, p[0], p[1])
+		w.SpawnUnit(0, DefVillager, p[0], p[1])
 	}
-	lone := spawnUnitAt(t, w, 0, DefVillager, 20, 15)
+	lone := w.SpawnUnit(0, DefVillager, 20, 15)
 	for i := 0; i < 200; i++ {
 		w.Step(nil)
 		if w.attacking(DefWolf, lone) {
@@ -270,8 +270,8 @@ func TestWolfAvoidsGroups(t *testing.T) {
 // through the day — the mirror schedule of its grey cousin.
 func TestBlackWolfHuntsAtNight(t *testing.T) {
 	w := soloWorld(22)
-	black := spawnUnitAt(t, w, OwnerNeutral, DefBlackWolf, 20, 20)
-	v := spawnUnitAt(t, w, 0, DefVillager, 27, 20)
+	black := w.SpawnUnit(OwnerNeutral, DefBlackWolf, 20, 20)
+	v := w.SpawnUnit(0, DefVillager, 27, 20)
 	for w.Tick() < 4330 {
 		w.Step(nil)
 	}
@@ -292,7 +292,7 @@ func TestBlackWolfHuntsAtNight(t *testing.T) {
 // TestBlackWolfSleepsByDay: morning to dusk the black wolf stands fast.
 func TestBlackWolfSleepsByDay(t *testing.T) {
 	w := soloWorld(23)
-	black := spawnUnitAt(t, w, OwnerNeutral, DefBlackWolf, 20, 20)
+	black := w.SpawnUnit(OwnerNeutral, DefBlackWolf, 20, 20)
 	x0, y0 := w.units.Get(black).X, w.units.Get(black).Y
 	for i := 0; i < 200; i++ {
 		w.Step(nil)
@@ -309,8 +309,8 @@ func TestBlackWolfSleepsByDay(t *testing.T) {
 // TestRabbitHuntedLeavesCorpse: rabbits feed like the bigger game.
 func TestRabbitHuntedLeavesCorpse(t *testing.T) {
 	w := forestWorld(21)
-	villager := spawnUnitAt(t, w, 0, DefVillager, 20, 20)
-	rabbit := spawnUnitAt(t, w, OwnerNeutral, DefRabbit, 21, 20)
+	villager := w.SpawnUnit(0, DefVillager, 20, 20)
+	rabbit := w.SpawnUnit(OwnerNeutral, DefRabbit, 21, 20)
 	w.Step([]proto.Order{{Player: 0, Kind: orders.Attack,
 		Payload: orders.AttackPayload([]uint32{uint32(villager)}, uint32(rabbit), orders.TargetUnit)}})
 	for i := 0; i < 20*60 && w.units.Alive(rabbit); i++ {

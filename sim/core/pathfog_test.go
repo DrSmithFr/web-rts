@@ -14,7 +14,7 @@ import (
 // with a single gap at column gap, so any north-south route must funnel
 // through it.
 func channelMap(size, gap int) *worldgen.Map {
-	grid := terrain.NewGrid(size)
+	grid := terrain.NewGridSquare(size)
 	for y := 0; y < size; y++ {
 		for x := 0; x < size; x++ {
 			if y == size/2 && x != gap {
@@ -90,7 +90,7 @@ func TestGroupMoveThroughGap(t *testing.T) {
 }
 
 func TestUnreachableMoveWaits(t *testing.T) {
-	grid := terrain.NewGrid(30)
+	grid := terrain.NewGridSquare(30)
 	for y := 10; y < 15; y++ {
 		for x := 0; x < 30; x++ {
 			grid.SetTile(x, y, terrain.Deep)

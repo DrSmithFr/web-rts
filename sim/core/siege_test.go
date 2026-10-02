@@ -8,21 +8,6 @@ import (
 	"rts/sim/proto"
 )
 
-func placeBuilding(t *testing.T, w *World, defID uint16, owner uint8, tx, ty int32) entity.ID {
-	t.Helper()
-	def := w.bdefs.Get(defID)
-	if def == nil {
-		t.Fatalf("no building def %d", defID)
-	}
-	id, b := w.buildings.Create()
-	b.DefID, b.Owner, b.TileX, b.TileY = defID, owner, tx, ty
-	b.Size = def.Size
-	b.HP = buildingHP(def)
-	b.Progress = def.BuildTicks
-	w.markOccupied(b)
-	return id
-}
-
 func buildingHPLeft(t *testing.T, w *World, id entity.ID) int32 {
 	t.Helper()
 	b := w.buildings.Get(id)
@@ -34,8 +19,8 @@ func buildingHPLeft(t *testing.T, w *World, id entity.ID) int32 {
 
 func TestWatchtowerShootsEnemiesInRange(t *testing.T) {
 	w := flatWorld(21)
-	tower := placeBuilding(t, w, BldWatchtower, 0, 20, 20)
-	victim := spawnUnitAt(t, w, 1, DefVillager, 24, 20)
+	tower := w.PlaceBuilding(0, BldWatchtower, 20, 20, false)
+	victim := w.SpawnUnit(1, DefVillager, 24, 20)
 	for i := 0; i < 20*60 && w.units.Alive(victim); i++ {
 		w.Step(nil)
 	}
@@ -49,9 +34,9 @@ func TestWatchtowerShootsEnemiesInRange(t *testing.T) {
 
 func TestWatchtowerIgnoresFarAndNeutralTargets(t *testing.T) {
 	w := flatWorld(22)
-	placeBuilding(t, w, BldWatchtower, 0, 20, 20)
-	far := spawnUnitAt(t, w, 1, DefVillager, 32, 20)
-	animal := spawnUnitAt(t, w, OwnerNeutral, DefDeer, 21, 20)
+	w.PlaceBuilding(0, BldWatchtower, 20, 20, false)
+	far := w.SpawnUnit(1, DefVillager, 32, 20)
+	animal := w.SpawnUnit(OwnerNeutral, DefDeer, 21, 20)
 	for i := 0; i < 20*120; i++ {
 		w.Step(nil)
 	}
@@ -66,8 +51,8 @@ func TestWatchtowerIgnoresFarAndNeutralTargets(t *testing.T) {
 func TestSiegeCrushesBuildings(t *testing.T) {
 	razorTicks := func(defID uint16) int {
 		w := flatWorld(23)
-		hut := placeBuilding(t, w, BldHut, 1, 20, 20)
-		attacker := spawnUnitAt(t, w, 0, defID, 24, 20)
+		hut := w.PlaceBuilding(1, BldHut, 20, 20, false)
+		attacker := w.SpawnUnit(0, defID, 24, 20)
 		if attacker == entity.Nil {
 			t.Fatalf("spawn failed for def %d", defID)
 		}
@@ -92,7 +77,7 @@ func TestSiegeCrushesBuildings(t *testing.T) {
 
 func TestWallsBlockAndAbsorb(t *testing.T) {
 	w := flatWorld(24)
-	wall := placeBuilding(t, w, BldWall, 0, 20, 20)
+	wall := w.PlaceBuilding(0, BldWall, 20, 20, false)
 	if got := buildingHPLeft(t, w, wall); got != 400 {
 		t.Fatalf("wall hp = %d, want 400", got)
 	}
@@ -107,9 +92,9 @@ func TestWallsBlockAndAbsorb(t *testing.T) {
 func TestSiegeCombatDeterministic(t *testing.T) {
 	run := func() uint64 {
 		w := flatWorld(25)
-		tower := placeBuilding(t, w, BldWatchtower, 0, 20, 20)
+		tower := w.PlaceBuilding(0, BldWatchtower, 20, 20, false)
 		for i := int32(0); i < 3; i++ {
-			id := spawnUnitAt(t, w, 1, DefLancer, 22+i, 21)
+			id := w.SpawnUnit(1, DefLancer, 22+i, 21)
 			l := uint32(id)
 			w.Step([]proto.Order{{Player: 1, Kind: orders.Attack,
 				Payload: orders.AttackPayload([]uint32{l}, uint32(tower), orders.TargetBuilding)}})

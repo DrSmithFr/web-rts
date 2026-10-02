@@ -17,7 +17,7 @@ import (
 // explicit biome layer (nil = all temperate).
 func grassWorld(t *testing.T, biomes []uint8) *World {
 	t.Helper()
-	grid := terrain.NewGrid(40)
+	grid := terrain.NewGridSquare(40)
 	m := worldgen.CustomWithBiomes(grid, [][2]int{{5, 5}}, nil, nil, biomes)
 	return NewWorldWithMap(0x7, m)
 }
@@ -260,7 +260,7 @@ func TestHuntChainsToPrey(t *testing.T) {
 	u := firstUnit(w, 0)
 	corpse := addNode(w, resource.Food, 0, 12, 5, 5)
 	w.nodes.Get(corpse).Corpse = true
-	deer := spawnUnitAt(t, w, OwnerNeutral, DefDeer, 13, 5)
+	deer := w.SpawnUnit(OwnerNeutral, DefDeer, 13, 5)
 	w.Step([]proto.Order{{Player: 0, Kind: orders.Gather,
 		Payload: orders.GatherPayload(uint32(u), uint32(corpse))}})
 	for i := 0; i < 20*300; i++ {

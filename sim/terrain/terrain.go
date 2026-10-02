@@ -1,9 +1,9 @@
-// Package terrain defines the tile model: six terrain types plus the square
-// grid of tiles with integer heights at vertices.
+// Package terrain defines the tile model: six terrain types plus the
+// rectangular grid of tiles with integer heights at vertices.
 //
-// Heights are whole numbers in [0, MaxHeight] stored per vertex, so a grid
-// of size N has (N+1)^2 heights. All storage is slices indexed row-major;
-// no maps anywhere.
+// Heights are whole numbers in [0, MaxHeight] stored per vertex, so a
+// w x h grid has (w+1)*(h+1) heights. All storage is slices indexed
+// row-major; no maps anywhere.
 package terrain
 
 // Type is the terrain kind of a tile.
@@ -53,28 +53,46 @@ func (t Type) String() string {
 	}
 }
 
-// Grid is one square map: tiles per side plus vertex heights.
+// Grid is one rectangular map: w x h tiles plus vertex heights.
 type Grid struct {
-	size  int
+	w, h  int
 	tiles []Type
 	verts []int32
 }
 
-// NewGrid builds an empty (all-grass, flat) grid.
-func NewGrid(size int) *Grid {
+// NewGrid builds an empty (all-grass, flat) w x h grid.
+func NewGrid(w, h int) *Grid {
 	return &Grid{
-		size:  size,
-		tiles: make([]Type, size*size),
-		verts: make([]int32, (size+1)*(size+1)),
+		w:     w,
+		h:     h,
+		tiles: make([]Type, w*h),
+		verts: make([]int32, (w+1)*(h+1)),
 	}
 }
 
-// Size is the number of tiles per side.
-func (g *Grid) Size() int { return g.size }
+// NewGridSquare builds an empty n x n grid.
+func NewGridSquare(n int) *Grid {
+	return NewGrid(n, n)
+}
+
+// Width returns the number of tiles per row.
+func (g *Grid) Width() int { return g.w }
+
+// Height returns the number of tile rows.
+func (g *Grid) Height() int { return g.h }
+
+// Size is the side length of a square grid; it panics when the grid is
+// not square. Only code that still assumes square maps may use it.
+func (g *Grid) Size() int {
+	if g.w != g.h {
+		panic("terrain: Size on non-square grid")
+	}
+	return g.w
+}
 
 // InBounds reports whether tile coordinates are inside the grid.
 func (g *Grid) InBounds(x, y int) bool {
-	return x >= 0 && y >= 0 && x < g.size && y < g.size
+	return x >= 0 && y >= 0 && x < g.w && y < g.h
 }
 
 // Tile returns the terrain at (x, y); it panics when out of bounds, which
@@ -83,7 +101,7 @@ func (g *Grid) Tile(x, y int) Type {
 	if !g.InBounds(x, y) {
 		panic("terrain: tile out of bounds")
 	}
-	return g.tiles[y*g.size+x]
+	return g.tiles[y*g.w+x]
 }
 
 // SetTile assigns the terrain at (x, y).
@@ -91,13 +109,14 @@ func (g *Grid) SetTile(x, y int, t Type) {
 	if !g.InBounds(x, y) {
 		panic("terrain: tile out of bounds")
 	}
-	g.tiles[y*g.size+x] = t
+	g.tiles[y*g.w+x] = t
 }
 
-// Vertex returns the height of vertex (x, y), where x and y run 0..Size.
+// Vertex returns the height of vertex (x, y), where x and y run
+// 0..Width and 0..Height.
 func (g *Grid) Vertex(x, y int) int32 {
-	stride := g.size + 1
-	if x < 0 || y < 0 || x > g.size || y > g.size {
+	stride := g.w + 1
+	if x < 0 || y < 0 || x > g.w || y > g.h {
 		panic("terrain: vertex out of bounds")
 	}
 	return g.verts[y*stride+x]
@@ -111,7 +130,7 @@ func (g *Grid) SetVertex(x, y int, h int32) {
 	if h > MaxHeight {
 		h = MaxHeight
 	}
-	stride := g.size + 1
+	stride := g.w + 1
 	g.verts[y*stride+x] = h
 }
 

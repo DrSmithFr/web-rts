@@ -5,6 +5,55 @@ merges (`vNN-phase-name`).
 
 ## Unreleased
 
+Entity behaviour rules from `docs/entities.md`: what an entity sees, how
+hungry it is and what that does to it.
+
+### Added
+
+- Heading and free movement: every unit carries a `heading` and turns at a
+  data-driven `turnRate`, so actors are no longer grid-aligned and paths
+  cut across tiles.
+- Tunable vision arcs (`visionArc`, degrees): predators hunt in a cone
+  (wolf 140, bear 120, zombie 120, deer 260, villager 200, scout 280).
+- Fog of war is now cone-shaped: each unit reveals its own sight wedge, and
+  only completed campfires reveal ground (`CampfireVision`); buildings and
+  construction sites stay dark.
+- Conditions `fear`, `terror` and `rage` on `Unit.Cond`: fear tracks living
+  threats inside the vision arc, terror is the panic clock after being
+  struck, rage is the starving-hunter boost. Civilians flee to their own
+  completed building.
+- Predator hunger: a food meter (100 sated to 0 starving) that decays per
+  `hungerDecay` ticks, refills from the `corpseFood` of killed prey, drops
+  blood at zero, and below 20 makes a hunter bold (ignores campfire auras,
+  settlement radii and escorted prey) and below 10 enraged (faster, wider
+  aggro, via `rageSpeed`/`rageAggro`).
+- Split prey menus: `preyPreferred` (chased on sight) replaces `prey`, and
+  `preyFallback` + `preyFallbackAt` add opportunistic meals only while the
+  hunter is hungry.
+- Client shows a condition emoji above affected entities (terror > rage >
+  fear), fed by `cond` in `unitsBlob`.
+
+### Changed
+
+- Removed the `flee`, `fleeRadius` and `fleeClear` unit fields; panic now
+  comes from the fear/terror conditions.
+- `unitsBlob` records grow 24 to 28 bytes (`cond` u8 at offset 24);
+  `Unit.Cond`/`CondTicks`/`Hunger` are hashed, and shared angle maths moved
+  to `sim/angle` so fog and sim agree on the cone rule.
+- World hash label `rts.world/v21` (`WorldVersion` 15); replays under
+  `tools/replays/` re-recorded.
+
+### Tests
+
+- Behaviour tests with mini-maps under `sim/core/testdata/maps/`: free
+  movement and turn-rate limits, cone sees/wide arc sees behind, cone fog,
+  campfire radius, dark buildings, fear avoids seen predator, fear ignores
+  unseen one, terror after damage, villager fears predator, soldier feels no
+  fear, hunger decay, eating refills, hungry wolf ignores campfire (with a
+  sated control), rage at 10, starving bleeds, preferred prey and
+  fallback-only-when-hungry.
+- Client: condition glyph priority (`client/src/render/emoji.test.ts`).
+
 ## [v12-zombie-sieges-fortifications] - 2026-09-25
 
 Phase 12: night zombie sieges over relics, plus fortifications and siege engines.

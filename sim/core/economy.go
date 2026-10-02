@@ -23,6 +23,8 @@ func (w *World) speedOf(u *Unit) fixed.F16 {
 	if u.Owner < MaxPlayers {
 		speed += w.players[u.Owner].Mods.Speed16[d.Class]
 	}
+	// A starving hunter runs faster than a well-fed one.
+	speed = rageSpeed(speed, d, u)
 	return fixed.F16(speed)
 }
 
@@ -46,16 +48,8 @@ func (w *World) carryBonus(u *Unit) int32 {
 	return w.players[u.Owner].Mods.Carry[d.Class]
 }
 
-// startBuildingOffsets are candidate storehouse footprints (top-left tile,
-// relative to spawn) tried in order until one is walkable and free.
-var startBuildingOffsets = [][2]int32{{-4, -1}, {-4, 0}, {3, -1}, {3, 0}, {-1, -4}, {0, -4}, {-1, 3}, {0, 3}}
-
-// villagerOffsets place the starting villagers inside the stamped grass disc.
-var villagerOffsets = [][2]int32{{1, 1}, {-1, 1}, {1, -1}}
-
-// initEconomy seeds nodes, players, a storehouse and three villagers per
-// spawn. Must run after the map and stores exist.
-func (w *World) initEconomy() {
+// stampNodes turns the map's node table into harvestable Node entities.
+func (w *World) stampNodes() {
 	for _, n := range w.gameMap.Nodes() {
 		_, e := w.nodes.Create()
 		e.Kind = n.Kind
@@ -65,32 +59,56 @@ func (w *World) initEconomy() {
 		e.Y = tileCenter(n.Y)
 		e.Amount = n.Amount
 	}
-	for i, s := range w.gameMap.Spawns() {
+}
+
+// startBuildingOffsets are candidate storehouse footprints (top-left tile,
+// relative to spawn) tried in order until one is walkable and free.
+var startBuildingOffsets = [][2]int32{{-4, -1}, {-4, 0}, {3, -1}, {3, 0}, {-1, -4}, {0, -4}, {-1, 3}, {0, 3}}
+
+// villagerOffsets place the starting villagers inside the stamped grass disc.
+var villagerOffsets = [][2]int32{{1, 1}, {-1, 1}, {1, -1}}
+
+// applyStartKit places the procedural starting kit for one player: a
+// storehouse on the first free candidate offset around the spawn and
+// three villagers inside the stamped grass disc.
+func (w *World) applyStartKit(player uint8) {
+	spawns := w.gameMap.Spawns()
+	if int(player) >= len(spawns) {
+		return
+	}
+	s := spawns[player]
+	def := w.bdefs.Get(buildingStorehouse)
+	for _, o := range startBuildingOffsets {
+		tx, ty := int32(s[0])+o[0], int32(s[1])+o[1]
+		if w.footprintFree(tx, ty, def.Size) {
+			_, b := w.buildings.Create()
+			b.DefID = buildingStorehouse
+			b.Owner = player
+			b.TileX, b.TileY = tx, ty
+			b.Size = def.Size
+			b.HP = buildingHP(def)
+			w.markOccupied(b)
+			w.clearNodesUnder(tx, ty, def.Size)
+			break
+		}
+	}
+	for _, o := range villagerOffsets {
+		w.spawnVillagerAt(player, int32(s[0])+o[0], int32(s[1])+o[1])
+	}
+}
+
+// initEconomy seeds nodes, players, a storehouse and three villagers per
+// spawn. Must run after the map and stores exist.
+func (w *World) initEconomy() {
+	w.stampNodes()
+	for i := range w.gameMap.Spawns() {
 		p := &w.players[i]
 		p.Active = true
 		p.Res[resource.Wood] = startWood
 		p.Res[resource.Stone] = startStone
 		p.Res[resource.Food] = startFood
 		p.Res[resource.Gold] = startGold
-
-		def := w.bdefs.Get(buildingStorehouse)
-		for _, o := range startBuildingOffsets {
-			tx, ty := int32(s[0])+o[0], int32(s[1])+o[1]
-			if w.footprintFree(tx, ty, def.Size) {
-				_, b := w.buildings.Create()
-				b.DefID = buildingStorehouse
-				b.Owner = uint8(i)
-				b.TileX, b.TileY = tx, ty
-				b.Size = def.Size
-				b.HP = buildingHP(def)
-				w.markOccupied(b)
-				w.clearNodesUnder(tx, ty, def.Size)
-				break
-			}
-		}
-		for _, o := range villagerOffsets {
-			w.spawnVillagerAt(uint8(i), int32(s[0])+o[0], int32(s[1])+o[1])
-		}
+		w.applyStartKit(uint8(i))
 	}
 	for _, a := range w.gameMap.Animals() {
 		w.spawnUnit(OwnerNeutral, a.Def, tileCenter(a.X), tileCenter(a.Y))
@@ -136,11 +154,11 @@ func (w *World) footprintFree(tx, ty, size int32) bool {
 
 // tileWalkable reports terrain and building occupancy for a tile.
 func (w *World) tileWalkable(x, y int32) bool {
-	size := int32(w.gameMap.Grid().Size())
-	if x < 0 || y < 0 || x >= size || y >= size {
+	width, height := int32(w.gameMap.Grid().Width()), int32(w.gameMap.Grid().Height())
+	if x < 0 || y < 0 || x >= width || y >= height {
 		return false
 	}
-	if w.occupied[y*size+x] {
+	if w.occupied[y*width+x] {
 		return false
 	}
 	t := w.gameMap.Grid().Tile(int(x), int(y))
@@ -157,27 +175,29 @@ func buildingHP(def *building.Def) int32 {
 
 // tileBlocked reports only building occupancy (units may share ground).
 func (w *World) tileBlocked(x, y int32) bool {
-	size := int32(w.gameMap.Grid().Size())
-	if x < 0 || y < 0 || x >= size || y >= size {
+	width, height := int32(w.gameMap.Grid().Width()), int32(w.gameMap.Grid().Height())
+	if x < 0 || y < 0 || x >= width || y >= height {
 		return true
 	}
-	return w.occupied[y*size+x]
+	return w.occupied[y*width+x]
 }
 
 func (w *World) markOccupied(b *Building) {
-	size := w.gameMap.Grid().Size()
+	width, height := w.gameMap.Grid().Width(), w.gameMap.Grid().Height()
 	for dy := int32(0); dy < b.Size; dy++ {
 		for dx := int32(0); dx < b.Size; dx++ {
 			x, y := int(b.TileX)+int(dx), int(b.TileY)+int(dy)
-			if x >= 0 && y >= 0 && x < size && y < size {
-				w.occupied[y*size+x] = true
+			if x >= 0 && y >= 0 && x < width && y < height {
+				w.occupied[y*width+x] = true
 			}
 		}
 	}
 }
 
 // updateVision advances fog of war: visible decays to explored, then the
-// player's own units and buildings reveal fresh ground.
+// player's own units reveal fresh ground in their vision cone. Only
+// completed campfires reveal ground on their own; every other building
+// and every half-built site stays dark.
 func (w *World) updateVision() {
 	for i := 0; i < MaxPlayers; i++ {
 		if w.players[i].Active {
@@ -185,24 +205,22 @@ func (w *World) updateVision() {
 		}
 	}
 	w.units.Each(func(_ entity.ID, u *Unit) {
-		if u.Owner >= MaxPlayers {
+		if u.Owner >= MaxPlayers || u.State == UnitSleep {
+			return // sleepers keep their eyes shut, so the fog stays shut
+		}
+		if !w.players[u.Owner].Active {
 			return
 		}
-		if w.players[u.Owner].Active {
-			w.fogs[u.Owner].ApplyCircle(int(tileOf(u.X)), int(tileOf(u.Y)), w.visionOf(u))
-		}
+		w.fogs[u.Owner].ApplyCone(int(tileOf(u.X)), int(tileOf(u.Y)),
+			w.visionOf(u), int(u.Heading), int(w.visionArcOf(u)))
 	})
 	w.buildings.Each(func(_ entity.ID, b *Building) {
-		if !w.players[b.Owner].Active {
+		if !w.players[b.Owner].Active || b.DefID != BldCampfire || b.Progress != 0 || b.HP <= 0 {
 			return
-		}
-		r := SiteVision
-		if b.Progress == 0 {
-			r = BuildingVision
 		}
 		cx := int(b.TileX) + int(b.Size-1)/2
 		cy := int(b.TileY) + int(b.Size-1)/2
-		w.fogs[b.Owner].ApplyCircle(cx, cy, r)
+		w.fogs[b.Owner].ApplyCircle(cx, cy, CampfireVision)
 	})
 }
 
@@ -225,6 +243,7 @@ func (w *World) spawnUnit(owner uint8, defID uint16, x, y fixed.F16) entity.ID {
 	u.HomeX, u.HomeY = x, y
 	u.Relic = NoRelic
 	u.HP = def.HP
+	u.Hunger = HungerFull
 	if owner < MaxPlayers {
 		w.players[owner].Pop += def.PopCost
 	}
@@ -242,7 +261,7 @@ func (w *World) spawnUnitNear(owner uint8, udef *units.Def, b *Building) {
 				if !w.tileWalkable(tx, ty) {
 					continue
 				}
-				if !w.occupied[int(ty)*w.gameMap.Grid().Size()+int(tx)] {
+				if !w.occupied[int(ty)*w.gameMap.Grid().Width()+int(tx)] {
 					w.spawnUnit(owner, udef.ID, tileCenter(tx), tileCenter(ty))
 					return
 				}
@@ -327,6 +346,7 @@ func (w *World) applyMoveGroup(player uint8, p []byte) bool {
 		u.TX, u.TY = tileCenter(slot[0]), tileCenter(slot[1])
 		u.Target = entity.Nil
 		u.Field = fieldID
+		u.FieldX, u.FieldY = goalX, goalY
 		u.State = UnitMove
 	}
 	return true
@@ -374,7 +394,7 @@ func (w *World) addFlowField(origins [][2]int32, goalX, goalY int32) entity.ID {
 		}
 		return v
 	}
-	size := int32(w.gameMap.Grid().Size())
+	width, height := int32(w.gameMap.Grid().Width()), int32(w.gameMap.Grid().Height())
 	minX, minY, maxX, maxY := goalX, goalY, goalX, goalY
 	add := func(x, y int32) {
 		x, y = clamp(x, goalX), clamp(y, goalY)
@@ -402,11 +422,11 @@ func (w *World) addFlowField(origins [][2]int32, goalX, goalY int32) entity.ID {
 	if oy < 0 {
 		oy = 0
 	}
-	if ox2 >= size {
-		ox2 = size - 1
+	if ox2 >= width {
+		ox2 = width - 1
 	}
-	if oy2 >= size {
-		oy2 = size - 1
+	if oy2 >= height {
+		oy2 = height - 1
 	}
 
 	if w.fields.Len() >= MaxFields {
@@ -597,9 +617,29 @@ func (w *World) applyTrain(player uint8, p []byte) bool {
 	return true
 }
 
+// resumeWork puts a worker that ran from something back on its job: the
+// node or site it left if it still stands, the drop-off trip if it is
+// carrying, otherwise idle for the brain to re-task.
+func (w *World) resumeWork(u *Unit) {
+	u.State = UnitIdle
+	if u.Carried > 0 {
+		u.State = UnitReturn
+		return
+	}
+	if n := w.nodes.Get(u.Target); n != nil && n.Amount > 0 {
+		u.State = UnitGather
+		return
+	}
+	if b := w.buildings.Get(u.Target); b != nil && b.Progress != 0 && b.HP > 0 {
+		u.State = UnitBuild
+	}
+}
+
 // updateUnits runs one tick of the unit state machines.
 func (w *World) updateUnits() {
 	w.units.Each(func(id entity.ID, u *Unit) {
+		w.updateCond(u) // fear follows sight, terror counts down
+		w.hungerTick(id, u, w.udefs.Get(u.DefID))
 		if u.State == UnitIdle && u.Owner == OwnerNeutral {
 			u.State = UnitWander
 		}
@@ -610,6 +650,14 @@ func (w *World) updateUnits() {
 			}
 			w.wildlifeStep(id, u)
 			return
+		}
+		if u.State == UnitFlee || u.Cond&(CondFear|CondTerror) != 0 {
+			if w.panicStep(u, w.udefs.Get(u.DefID)) {
+				return // a frightened civilian runs before it works
+			}
+			if u.State == UnitFlee {
+				w.resumeWork(u)
+			}
 		}
 		switch u.State {
 		case UnitMove:
@@ -653,7 +701,15 @@ func (w *World) updateUnits() {
 				u.Target = entity.Nil
 				break
 			}
+			if !w.Reachable(tileOf(u.X), tileOf(u.Y), n.TileX, n.TileY) {
+				// ground the walker cannot reach: stop short instead of
+				// pressing into the shore, the caller re-assigns
+				u.State = UnitIdle
+				u.Target = entity.Nil
+				break
+			}
 			if near(u.X, u.Y, n.X, n.Y, WorkRange) {
+				w.faceToward(u, n.X, n.Y)
 				if u.Carried == 0 {
 					u.CarriedK = n.Kind
 				}
@@ -689,8 +745,11 @@ func (w *World) updateUnits() {
 				if u.Carried >= carryCap {
 					u.State = UnitReturn
 				}
-			} else {
-				stepToward(&u.X, &u.Y, n.X, n.Y, w.speedOf(u))
+			} else if !w.walkTo(u, n.X, n.Y, w.speedOf(u)) {
+				// no route to the node at all: let it go, the worker
+				// gets re-assigned to ground it can actually walk
+				u.State = UnitIdle
+				u.Target = entity.Nil
 			}
 		case UnitReturn:
 			d := w.nearestDropoff(u)
@@ -731,8 +790,10 @@ func (w *World) updateUnits() {
 						u.State = UnitIdle
 					}
 				}
-			} else {
-				stepToward(&u.X, &u.Y, bx, by, w.speedOf(u))
+			} else if !w.walkToBuilding(u, b) {
+				// dropoff unreachable: stand still with the load
+				// rather than press ground, the caller re-assigns
+				u.State = UnitIdle
 			}
 		case UnitBuild:
 			b := w.buildings.Get(u.Target)
@@ -748,53 +809,51 @@ func (w *World) updateUnits() {
 			}
 			bx, by := buildingCenter(b)
 			if !near(u.X, u.Y, bx, by, WorkRange+fixed.F16(b.Size>>1)<<16) {
-				stepToward(&u.X, &u.Y, bx, by, w.speedOf(u))
+				w.walkToBuilding(u, b)
+			} else {
+				w.faceToward(u, bx, by)
 			}
 		}
 	})
 }
 
-// moveUnit advances one moving unit: follow the shared flow field while
-// it covers the walker, then finish with a direct approach to the exact
-// (formation) slot.
+// moveUnit advances one moving unit: the flow field (shared by a group,
+// built on demand for a lone walker) keeps the route off water and
+// obstructions, then the unit finishes with a direct approach to its
+// exact (formation) slot.
 func (w *World) moveUnit(u *Unit) {
-	if u.Field != entity.Nil {
-		f := w.fields.Get(u.Field)
-		if f == nil {
-			u.Field = entity.Nil
-		} else {
-			cx, cy := tileOf(u.X), tileOf(u.Y)
-			d := f.Distance(cx, cy)
-			switch {
-			case d == 0 || f.AtGoal(cx, cy):
-				w.fields.Free(u.Field)
-				u.Field = entity.Nil
-			case d == path.Unreachable:
-				w.fields.Free(u.Field)
-				u.Field = entity.Nil
-			default:
-				nx, ny, ok := path.NextStep(f, w.tileWalkable, w.tileBlocked, cx, cy)
-				if ok {
-					stepToward(&u.X, &u.Y, tileCenter(nx), tileCenter(ny), w.speedOf(u))
-					return
-				}
-				w.fields.Free(u.Field)
-				u.Field = entity.Nil
-			}
-		}
-	}
 	if near(u.X, u.Y, u.TX, u.TY, 4096) {
 		u.X, u.Y = u.TX, u.TY
 		u.State = UnitIdle
 		return
 	}
-	stepToward(&u.X, &u.Y, u.TX, u.TY, w.speedOf(u))
+	gx, gy := tileOf(u.TX), tileOf(u.TY)
+	if u.Field != entity.Nil {
+		gx, gy = u.FieldX, u.FieldY // a group field aims at the group base
+	}
+	if !w.Reachable(tileOf(u.X), tileOf(u.Y), gx, gy) {
+		// ordered onto the far side of water: hold instead of marching
+		// into the shore, the caller re-issues when it wants otherwise
+		u.Field = entity.Nil
+		u.State = UnitIdle
+		return
+	}
+	if w.followField(u, gx, gy) == routeWalked {
+		return
+	}
+	w.stepToward(u, u.TX, u.TY, w.speedOf(u))
 }
 
+// Route outcomes of followField.
+const (
+	routeWalked  uint8 = iota // the field steered the walker this tick
+	routeClose                // the goal tile is reached: walk the last stretch
+	routeBlocked              // no path to the goal tile
+)
+
 // followField advances u one step along a flow field toward goal tile
-// (gx, gy), (re)creating the field when missing or stale. Returns true
-// when the field is driving the walker this tick.
-func (w *World) followField(u *Unit, gx, gy int32) bool {
+// (gx, gy), (re)creating the field when missing or stale.
+func (w *World) followField(u *Unit, gx, gy int32) uint8 {
 	if u.Field != entity.Nil && (u.FieldX != gx || u.FieldY != gy) {
 		u.Field = entity.Nil // stale goal; the pool evicts old fields
 	}
@@ -804,24 +863,27 @@ func (w *World) followField(u *Unit, gx, gy int32) bool {
 	}
 	f := w.fields.Get(u.Field)
 	if f == nil {
-		return false
+		return routeBlocked
 	}
 	cx, cy := tileOf(u.X), tileOf(u.Y)
 	d := f.Distance(cx, cy)
 	if d == path.Unreachable {
+		w.fields.Free(u.Field)
 		u.Field = entity.Nil
-		return false
+		return routeBlocked
 	}
 	if d == 0 || f.AtGoal(cx, cy) {
-		return false
+		w.fields.Free(u.Field)
+		u.Field = entity.Nil
+		return routeClose
 	}
-	nx, ny, ok := path.NextStep(f, w.tileWalkable, w.tileBlocked, cx, cy)
+	nx, ny, ok := path.NextStepTo(f, w.tileWalkable, w.tileBlocked, cx, cy, gx, gy)
 	if !ok {
 		u.Field = entity.Nil
-		return false
+		return routeBlocked
 	}
-	stepToward(&u.X, &u.Y, tileCenter(nx), tileCenter(ny), w.speedOf(u))
-	return true
+	w.stepToward(u, tileCenter(nx), tileCenter(ny), w.speedOf(u))
+	return routeWalked
 }
 
 func buildingCenter(b *Building) (fixed.F16, fixed.F16) {
@@ -864,6 +926,9 @@ func (w *World) chainTarget(u *Unit, kind resource.Kind, tree uint8) entity.ID {
 			if w.speciesGated(n) && !w.hasSawmill(u.Owner) {
 				return
 			}
+			if !w.Reachable(ux, uy, n.TileX, n.TileY) {
+				return
+			}
 			dx, dy := n.TileX-ux, n.TileY-uy
 			d := dx*dx + dy*dy
 			if d <= r*r && d < bestD {
@@ -888,6 +953,9 @@ func (w *World) nearestPrey(u *Unit) entity.ID {
 	var bestD int32 = 1 << 30
 	w.units.Each(func(id entity.ID, a *Unit) {
 		if a.Owner != OwnerNeutral || a.HP <= 0 {
+			return
+		}
+		if !w.Reachable(ux, uy, tileOf(a.X), tileOf(a.Y)) {
 			return
 		}
 		d := w.udefs.Get(a.DefID)
@@ -1020,23 +1088,162 @@ func shiftTrainQueue(b *Building) {
 	}
 }
 
-func stepToward(x, y *fixed.F16, tx, ty, speed fixed.F16) bool {
-	step := speed
-	dx := tx.Sub(*x)
-	dy := ty.Sub(*y)
-	ax, ay := abs16(dx), abs16(dy)
-	if ax <= step && ay <= step {
-		*x, *y = tx, ty
+// turnOf returns the def turn rate (degrees per tick) for a unit.
+func (w *World) turnOf(u *Unit) int32 {
+	if d := w.udefs.Get(u.DefID); d != nil && d.TurnRate > 0 {
+		return d.TurnRate
+	}
+	return units.DefaultTurnRate
+}
+
+// stepToward walks u towards (tx, ty): the goal only picks the heading
+// to steer along, the unit turns by at most its turn rate and then
+// advances at `speed` along that heading, so paths curve instead of
+// snapping to tile centers. Within one step of the goal it lands exactly
+// on it. Unwalkable ground makes the step slide along the free axis, or
+// keeps the unit where it is.
+func (w *World) stepToward(u *Unit, tx, ty, speed fixed.F16) bool {
+	dx, dy := tx.Sub(u.X), ty.Sub(u.Y)
+	if near(u.X, u.Y, tx, ty, speed) {
+		if dx != 0 || dy != 0 {
+			u.Heading = headingTo(dx, dy)
+		}
+		u.X, u.Y = tx, ty
 		return true
 	}
-	m := ax
-	if ay > m {
-		m = ay
+	u.Heading = turnToward(u.Heading, headingTo(dx, dy), w.turnOf(u))
+	nx := u.X.Add(speed.Mul(sinTable[u.Heading]))
+	ny := u.Y.Add(speed.Mul(cosTable[u.Heading]))
+	switch {
+	case w.tileWalkable(tileOf(nx), tileOf(ny)):
+		u.X, u.Y = nx, ny
+	case w.tileWalkable(tileOf(nx), tileOf(u.Y)):
+		u.X = nx
+	case w.tileWalkable(tileOf(u.X), tileOf(ny)):
+		u.Y = ny
+	default:
+		// Wedged in a corner: pull back to the middle of the tile the
+		// unit stands on, so the next tick approaches from ground that
+		// has room to turn instead of leaning into the wall.
+		mx, my := tileCenter(tileOf(u.X)), tileCenter(tileOf(u.Y))
+		if !w.tileWalkable(tileOf(u.X), tileOf(u.Y)) {
+			break
+		}
+		if d := abs16(mx.Sub(u.X)); d <= speed {
+			u.X = mx
+		} else {
+			u.X = u.X.Add(mx.Sub(u.X).Mul(speed.Div(d)))
+		}
+		if d := abs16(my.Sub(u.Y)); d <= speed {
+			u.Y = my
+		} else {
+			u.Y = u.Y.Add(my.Sub(u.Y).Mul(speed.Div(d)))
+		}
 	}
-	t := step.Div(m)
-	*x = x.Add(dx.Mul(t))
-	*y = y.Add(dy.Mul(t))
 	return false
+}
+
+// pathProbeMax caps how far ahead pathClear looks: the ground within
+// 64 tiles decides whether a walker goes straight or takes the field,
+// and beyond that a flow field is the cheaper answer anyway.
+const pathProbeMax int32 = 128
+
+// pathClear reports whether the straight run from (x0, y0) to (x1, y1)
+// crosses only walkable ground, sampled every half tile. It gates the
+// cheap direct walk: anything in the way sends the walker onto a flow
+// field so it goes around water and rocks instead of leaning on them.
+// Sampling is dropped past pathProbeMax steps, so ground under or right
+// in front of the unit always decides first.
+func (w *World) pathClear(x0, y0, x1, y1 fixed.F16) bool {
+	dx, dy := x1.Sub(x0), y1.Sub(y0)
+	distance := abs16(dx)
+	if abs16(dy) > distance {
+		distance = abs16(dy)
+	}
+	steps := int32(distance) / (1 << 15) // one probe per half tile
+	if steps < 1 {
+		steps = 1
+	}
+	if steps > pathProbeMax {
+		steps = pathProbeMax
+	}
+	for i := int32(1); i <= steps; i++ {
+		t := fixed.F16(int64(i) * (1 << 16) / int64(steps))
+		if !w.tileWalkable(tileOf(x0.Add(dx.Mul(t))), tileOf(y0.Add(dy.Mul(t)))) {
+			return false
+		}
+	}
+	return true
+}
+
+// walkTo sends u towards the exact point (tx, ty): straight ahead when
+// nothing stands between, otherwise along a flow field around the
+// obstruction.
+// walkTo returns false when no route to (tx, ty) exists at all, so the
+// caller can let go of the goal instead of leaning on the scenery.
+func (w *World) walkTo(u *Unit, tx, ty, speed fixed.F16) bool {
+	ux, uy := tileOf(u.X), tileOf(u.Y)
+	if !w.Reachable(ux, uy, tileOf(tx), tileOf(ty)) {
+		return false // different landmass: hold, the caller re-assigns
+	}
+	if w.pathClear(u.X, u.Y, tx, ty) {
+		w.stepToward(u, tx, ty, speed)
+		return true
+	}
+	switch w.followField(u, tileOf(tx), tileOf(ty)) {
+	case routeWalked:
+		return true
+	case routeClose:
+		w.stepToward(u, tx, ty, speed)
+		return true
+	}
+	return false
+}
+
+// approachTile picks the walkable tile just outside b's footprint that
+// sits closest to (x, y); ties go to the earlier scanned tile. Buildings
+// own their tiles, so workers route to one of these before closing in.
+func (w *World) approachTile(b *Building, x, y fixed.F16) (int32, int32, bool) {
+	var bestX, bestY int32
+	var bestD2 int64 = -1
+	for dy := int32(-1); dy <= b.Size; dy++ {
+		for dx := int32(-1); dx <= b.Size; dx++ {
+			if dx >= 0 && dx < b.Size && dy >= 0 && dy < b.Size {
+				continue
+			}
+			tx, ty := b.TileX+dx, b.TileY+dy
+			if !w.tileWalkable(tx, ty) {
+				continue
+			}
+			if d2 := dist2(x, y, tileCenter(tx), tileCenter(ty)); bestD2 < 0 || d2 < bestD2 {
+				bestD2, bestX, bestY = d2, tx, ty
+			}
+		}
+	}
+	return bestX, bestY, bestD2 >= 0
+}
+
+// walkToBuilding sends u to the building's doorstep tile, straight when
+// clear and along a flow field when ground stands in the way.
+func (w *World) walkToBuilding(u *Unit, b *Building) bool {
+	bx, by := buildingCenter(b)
+	ax, ay, ok := w.approachTile(b, u.X, u.Y)
+	switch {
+	case !ok, w.pathClear(u.X, u.Y, tileCenter(ax), tileCenter(ay)):
+		w.stepToward(u, bx, by, w.speedOf(u))
+		return true
+	case w.followField(u, ax, ay) == routeWalked:
+		return true
+	}
+	return false
+}
+
+// faceToward points u at (tx, ty) without moving it: attacking, gathering
+// and building units look at what they work on.
+func (w *World) faceToward(u *Unit, tx, ty fixed.F16) {
+	if dx, dy := tx.Sub(u.X), ty.Sub(u.Y); dx != 0 || dy != 0 {
+		u.Heading = headingTo(dx, dy)
+	}
 }
 
 func abs16(v fixed.F16) fixed.F16 {

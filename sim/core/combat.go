@@ -91,7 +91,7 @@ func (w *World) applyPatrol(player uint8, p []byte) bool {
 // arrival so the unit ping-pongs forever.
 func (w *World) patrolStep(u *Unit) {
 	gx, gy := tileOf(u.TX), tileOf(u.TY)
-	if w.followField(u, gx, gy) {
+	if w.followField(u, gx, gy) == routeWalked {
 		return
 	}
 	if near(u.X, u.Y, u.TX, u.TY, 2048) {
@@ -99,18 +99,50 @@ func (w *World) patrolStep(u *Unit) {
 		u.Field = entity.Nil
 		return
 	}
-	stepToward(&u.X, &u.Y, u.TX, u.TY, w.speedOf(u))
+	w.stepToward(u, u.TX, u.TY, w.speedOf(u))
 }
 
-// nearestThreat returns the closest hostile player unit within radius
-// tiles (ties by lower id), or nil.
+// nearestThreat returns the closest hostile unit within radius tiles
+// (ties by lower id), or nil. Player units threaten any animal; neutral
+// predators (species with a prey list) threaten prey species, so deer,
+// rabbits and sheep scatter from wolves. Only threats inside the unit's
+// vision arc count.
 func (w *World) nearestThreat(u *Unit, radius int32) *Unit {
+	return w.threatWithin(u, radius, true)
+}
+
+// nearestRouse is nearestThreat for a unit that cannot look around: a
+// sleeping animal wakes to the footsteps of whatever gets close, whatever
+// direction it is facing and whatever its eyes would have made of it.
+func (w *World) nearestRouse(u *Unit, radius int32) *Unit {
+	return w.threatWithin(u, radius, false)
+}
+
+// threatWithin is the shared threat scan; sight=false ignores the vision
+// arc and the sleep state.
+func (w *World) threatWithin(u *Unit, radius int32, sight bool) *Unit {
 	var best *Unit
 	var bestD2 int64 = int64(radius) << 16
 	bestD2 *= bestD2
+	udef := w.udefs.Get(u.DefID)
+	preyish := udef != nil && udef.Hunted
 	w.units.Each(func(_ entity.ID, o *Unit) {
-		if o.Owner == OwnerNeutral || o.Owner == u.Owner || o.HP <= 0 {
+		if o.HP <= 0 {
 			return
+		}
+		if o.Owner == OwnerNeutral {
+			if !preyish {
+				return
+			}
+			odef := w.udefs.Get(o.DefID)
+			if odef == nil || !odef.Predator() || o == u {
+				return
+			}
+		} else if o.Owner == u.Owner {
+			return
+		}
+		if sight && !w.inSight(u, radius, o.X, o.Y) {
+			return // out of range, or behind the nose
 		}
 		d2 := dist2(u.X, u.Y, o.X, o.Y)
 		if d2 < bestD2 || (d2 == bestD2 && best != nil && false) {
@@ -163,6 +195,7 @@ func (w *World) combatPhase() {
 		killer entity.ID
 		victim entity.ID
 		human  bool
+		food   int32 // corpse food the victim carries, for a hunter killer
 		x, y   fixed.F16
 	}
 	var kills []kill
@@ -180,10 +213,15 @@ func (w *World) combatPhase() {
 			// snowball into an unkillable horde
 			human := u.Owner < MaxPlayers && u.DefID != DefZombie &&
 				vdef != nil && !vdef.Military()
+			food := int32(0)
+			if vdef != nil {
+				food = vdef.CorpseFood
+			}
 			kills = append(kills, kill{
 				killer: attacker,
 				victim: victim,
 				human:  human,
+				food:   food,
 				x:      u.X,
 				y:      u.Y,
 			})
@@ -221,11 +259,13 @@ func (w *World) combatPhase() {
 			reach += fixed.F16(w.players[u.Owner].Mods.Range16[def.Class])
 		}
 		if near(u.X, u.Y, t.X, t.Y, reach) {
+			w.faceToward(u, t.X, t.Y)
 			if u.Cooldown > 0 {
 				return
 			}
 			t.HP -= w.attackDamage(def, u.Owner, t)
 			u.Cooldown = def.Rate
+			w.terrify(t, u.X, u.Y) // a blow leaves panic with a direction
 			if t.State == UnitSleep {
 				t.State = UnitWander // a struck animal rouses at once
 			}
@@ -246,8 +286,8 @@ func (w *World) combatPhase() {
 			w.wildChase(u, def, t) // animals step straight, no flow field
 			return
 		}
-		if !w.followField(u, tileOf(t.X), tileOf(t.Y)) {
-			stepToward(&u.X, &u.Y, t.X, t.Y, w.speedOf(u))
+		if w.followField(u, tileOf(t.X), tileOf(t.Y)) != routeWalked {
+			w.stepToward(u, t.X, t.Y, w.speedOf(u))
 		}
 	})
 
@@ -261,8 +301,6 @@ func (w *World) combatPhase() {
 		fg := w.fogs[u.Owner]
 		var best entity.ID
 		var bestD2 int64 = -1
-		limit := int64(def.Vision) << 16
-		limit *= limit
 		w.units.Each(func(id entity.ID, o *Unit) {
 			if o.HP <= 0 || o.Owner == u.Owner {
 				return
@@ -278,10 +316,10 @@ func (w *World) combatPhase() {
 			if fg.State(int(tileOf(o.X)), int(tileOf(o.Y))) != fog.Visible {
 				return
 			}
-			d2 := dist2(u.X, u.Y, o.X, o.Y)
-			if d2 > limit {
-				return
+			if !w.sees(u, o.X, o.Y) {
+				return // hostile outside the vision cone
 			}
+			d2 := dist2(u.X, u.Y, o.X, o.Y)
 			if bestD2 < 0 || d2 < bestD2 || (d2 == bestD2 && id < best) {
 				bestD2, best = d2, id
 			}
@@ -294,6 +332,32 @@ func (w *World) combatPhase() {
 	})
 
 	w.towerPhase(markDead)
+	// Starvation: a hunter that has not eaten in days stops running and
+	// starts losing blood until something gives way.
+	w.units.Each(func(id entity.ID, u *Unit) {
+		def := w.udefs.Get(u.DefID)
+		if u.HP <= 0 || def == nil || !def.Hungry() || u.Hunger > 0 {
+			return
+		}
+		if (uint64(w.tick)+uint64(id))%uint64(StarveTicks) != 0 {
+			return
+		}
+		u.HP -= StarveDamage
+		if u.HP <= 0 {
+			markDead(entity.Nil, id)
+		}
+	})
+
+	// A hunter that brought something down eats it here and now.
+	for _, k := range kills {
+		if k.killer == entity.Nil || k.food <= 0 {
+			continue
+		}
+		if killer := w.units.Get(k.killer); killer != nil {
+			w.eat(killer, k.food)
+		}
+	}
+
 	w.processDeaths(dead)
 
 	// infection: every human a zombie kills rises again bound to the
@@ -329,6 +393,7 @@ func (w *World) attackBuilding(id entity.ID, u *Unit, def *units.Def) bool {
 	}
 	reach += fixed.F16((b.Size>>1)+1) << 16
 	if near(u.X, u.Y, bx, by, reach) {
+		w.faceToward(u, bx, by)
 		if u.Cooldown > 0 {
 			return true
 		}
@@ -349,8 +414,8 @@ func (w *World) attackBuilding(id entity.ID, u *Unit, def *units.Def) bool {
 		}
 		return true
 	}
-	if !w.followField(u, b.TileX+b.Size>>1, b.TileY+b.Size>>1) {
-		stepToward(&u.X, &u.Y, bx, by, w.speedOf(u))
+	if w.followField(u, b.TileX+b.Size>>1, b.TileY+b.Size>>1) != routeWalked {
+		w.stepToward(u, bx, by, w.speedOf(u))
 	}
 	return true
 }
@@ -448,6 +513,8 @@ func (w *World) towerPhase(markDead func(attacker, victim entity.ID)) {
 		dmg := w.towerDamage(def, t)
 		t.HP -= dmg
 		b.TowerCd = def.TowerRate
+		// Tower bolts do not panic anybody: a civilian only takes flight
+		// from living threats it can see, not from stone that shoots.
 		if t.State == UnitSleep {
 			t.State = UnitWander
 		}

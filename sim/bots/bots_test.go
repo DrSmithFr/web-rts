@@ -1,41 +1,19 @@
-package bots
+package bots_test
 
 import (
-	"sort"
 	"testing"
 
+	"rts/sim/bots"
 	"rts/sim/core"
-	"rts/sim/proto"
 	"rts/sim/resource"
+	"rts/sim/simtest"
 	"rts/sim/worldgen"
 )
 
-// drive steps world with brain-generated orders, stamping them for the
-// next tick exactly like a lockstep peer would.
-func drive(w *core.World, brains map[uint8]*Brain, ticks uint32) {
-	var pending []proto.Order
-	for t := uint32(0); t < ticks; t++ {
-		next := pending
-		pending = nil
-		w.Step(next)
-		var ids []uint8
-		for p := range brains {
-			ids = append(ids, p)
-		}
-		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-		for _, p := range ids {
-			for _, o := range brains[p].Step(w, t) {
-				o.Tick = w.Tick()
-				pending = append(pending, o)
-			}
-		}
-	}
-}
-
 func TestBotReachesAntiquity(t *testing.T) {
 	w := core.NewWorldSize(0x5eed, worldgen.DefaultSize, 2)
-	brains := map[uint8]*Brain{0: New(0, Hard)}
-	drive(w, brains, 9000)
+	brains := map[uint8]*bots.Brain{0: bots.New(0, bots.Hard)}
+	simtest.Drive(w, brains, 9000)
 	pl := &w.Players()[0]
 	if pl.Era < 1 {
 		t.Fatalf("era = %d after 9000 ticks, want >= 1", pl.Era)
@@ -48,10 +26,10 @@ func TestBotReachesAntiquity(t *testing.T) {
 func TestDeterminismOfBrains(t *testing.T) {
 	run := func() uint64 {
 		w := core.NewWorldSize(0x1234, worldgen.DefaultSize, 3)
-		brains := map[uint8]*Brain{
-			0: New(0, Hard), 1: New(1, Standard), 2: New(2, Easy),
+		brains := map[uint8]*bots.Brain{
+			0: bots.New(0, bots.Hard), 1: bots.New(1, bots.Standard), 2: bots.New(2, bots.Easy),
 		}
-		drive(w, brains, 4000)
+		simtest.Drive(w, brains, 4000)
 		return w.Hash()
 	}
 	a, b := run(), run()
@@ -68,11 +46,11 @@ func TestBrainsPlayToVictory(t *testing.T) {
 		t.Skip("long bot game")
 	}
 	w := core.NewWorldSize(0x5eed, worldgen.DefaultSize, 3)
-	brains := map[uint8]*Brain{
-		0: New(0, Hard), 1: New(1, Standard), 2: New(2, Standard),
+	brains := map[uint8]*bots.Brain{
+		0: bots.New(0, bots.Hard), 1: bots.New(1, bots.Standard), 2: bots.New(2, bots.Standard),
 	}
-	for round := 0; round < 40; round++ {
-		drive(w, brains, 2000)
+	for round := 0; round < 60; round++ {
+		simtest.Drive(w, brains, 2000)
 		if p, kind := w.Winner(); p != core.OwnerNeutral {
 			t.Logf("winner player %d kind %d at tick %d", p, kind, w.Tick())
 			if kind == core.WinnerNone {

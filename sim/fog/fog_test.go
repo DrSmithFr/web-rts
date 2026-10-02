@@ -3,7 +3,7 @@ package fog
 import "testing"
 
 func TestDecayCycle(t *testing.T) {
-	g := New(5)
+	g := New(5, 5)
 	g.ApplyCircle(2, 2, 1)
 	if g.State(2, 2) != Visible || g.State(3, 2) != Visible {
 		t.Fatal("circle not applied")
@@ -26,12 +26,12 @@ func TestDecayCycle(t *testing.T) {
 }
 
 func TestPackedRoundtrip(t *testing.T) {
-	g := New(3)
+	g := New(3, 3)
 	g.ApplyCircle(1, 1, 1)
 	g.Decay()
 	packed := g.Packed(nil)
-	if len(packed) != PackedLen(3) {
-		t.Fatalf("packed len %d, want %d", len(packed), PackedLen(3))
+	if len(packed) != PackedLen(3, 3) {
+		t.Fatalf("packed len %d, want %d", len(packed), PackedLen(3, 3))
 	}
 	for i := 0; i < 9; i++ {
 		want := g.states[i]
@@ -43,7 +43,7 @@ func TestPackedRoundtrip(t *testing.T) {
 }
 
 func TestOutOfBoundsSafe(t *testing.T) {
-	g := New(4)
+	g := New(4, 4)
 	g.ApplyCircle(0, 0, 10) // must clamp, not panic
 	if g.State(3, 2) != Visible || g.State(-1, 0) != Unexplored {
 		t.Fatal("circle/edge handling broken")
@@ -51,7 +51,7 @@ func TestOutOfBoundsSafe(t *testing.T) {
 }
 
 func TestCounts(t *testing.T) {
-	g := New(10)
+	g := New(10, 10)
 	g.ApplyCircle(5, 5, 2)
 	_, _, vis := g.Counts()
 	if vis == 0 || vis >= 100 {

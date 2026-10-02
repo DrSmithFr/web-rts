@@ -11,6 +11,7 @@ export interface RawSim {
   hashHex(id: number): string;
   seed(id: number): number;
   mapSize(id: number): number;
+  mapHeight(id: number): number;
   mapTiles(id: number): Uint8Array;
   mapBiomes(id: number): Uint8Array;
   mapHeights(id: number): Uint8Array;
@@ -111,7 +112,8 @@ export interface UnitDefJson {
   trainBy: number;
   trainTicks: number;
   corpseFood: number;
-  flee: boolean;
+  terrorTicks: number;
+  hunted: boolean;
   minEra: number;
   bonuses: UnitBonusJson[];
 }
